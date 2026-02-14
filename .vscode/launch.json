@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:ENDBattery}",
+            "name": "Debug ENDBattery",
+            "target": "ENDBattery",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug ENDBattery"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:ENDBattery}",
+            "name": "Release ENDBattery",
+            "target": "ENDBattery",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release ENDBattery"
+        }
+    ]
+}
