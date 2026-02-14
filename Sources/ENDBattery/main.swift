@@ -187,47 +187,93 @@ struct OverlapStats {
 for config in configs {
 	print("\n--------------------------------------------------")
 	print("🔍 正在搜索:　\(config.name)")
-	
-	// Reset output counter for each config
-	var showTopSolutions = 1
-	
-	// Target total power required (Watts), core generates 200W
-	var requiredPower: Double = config.baseRequiredPower - 200
-	
-	// --- Derived Variables ---
+
 	let batteryStatic = config.staticBattery
 	let battery = config.analyzedBattery
-	
-	let preSplit: Double = battery == .originium ? pow(2, 2) : pow(3, 2) // Hardcoded to discard the first n k-way splits. Originium power is too low, so only binary split twice.
-	let depthLimit = min(maxDepthLimit, Int(preSplit) - extraBeltInSteps)
-	
+
+	// Reset output counter for each config
+	var showTopSolutions = showTopSolutions
+
+	// Target total power required (Watts), core generates 200W
+	let totalPower = config.baseRequiredPower - 200
+	let maxAnalyzedBatteryDesignPower = battery.power * Double(analyzedBatteryCount)
+	let maxAnalyzedBatteryPower = min(totalPower, maxAnalyzedBatteryDesignPower)
+	let staticBatteryCount = Int(ceil((totalPower - maxAnalyzedBatteryPower) / batteryStatic.power))
+	let requiredPower: Double = totalPower - Double(staticBatteryCount) * batteryStatic.power
+
+	let actualBatteryCount = Int(ceil(requiredPower / battery.power))
+
+	// --- Derived Variables ---
+
+	let depthLimit: Int
+	let preSplitBits: [Double]
+	let preSplit: Double
+	do {
+		var targetBits: [Double] = [0]
+		var targetPreSplit: Double = 1
+		var targetdepthLimit: Int = 1000
+
+		func findBits(previousPower: Double, splitFactor: Double, bits: [Double]) {
+			let preSplit = bits.reduce(1, {
+				$0 * $1
+			})
+			guard preSplit <= 9 else {
+				return
+			}
+			let currentPower = previousPower * splitFactor
+
+			let maxRemainingBitCount = Int(ceil(log2(currentPower)))
+			let bitLimit = Int(preSplit) - extraBeltInSteps
+
+			guard maxRemainingBitCount >= bitLimit else {
+				return
+			}
+			if (preSplit == targetPreSplit && targetBits.count > bits.count) || preSplit > targetPreSplit {
+				targetBits = bits
+				targetPreSplit = preSplit
+				targetdepthLimit = bitLimit
+			}
+
+			findBits(
+				previousPower: currentPower,
+				splitFactor: 1 / 2,
+				bits: bits + [2]
+			)
+			findBits(
+				previousPower: currentPower,
+				splitFactor: 1 / 3,
+				bits: bits + [3]
+			)
+		}
+		findBits(
+			previousPower: battery.totalEnergy / 2,
+			splitFactor: 1,
+			bits: []
+		)
+		preSplitBits = targetBits
+		preSplit = targetPreSplit
+		depthLimit = min(maxDepthLimit, targetdepthLimit)
+	}
+
 	print("⚓️ 最大递归深度: \(depthLimit)")
 	
 	let totalBatteryPower: Double = battery.totalEnergy / 2 / preSplit
-	let staticBatteryCount: Int = Int(requiredPower / batteryStatic.power)
-	requiredPower -= batteryStatic.power * Double(staticBatteryCount)
-	
-	let batteryCount = Int(requiredPower / battery.power) + 1
-	
-	if batteryCount > analyzedBatteryCount {
-		requiredPower -= battery.power * Double(batteryCount - analyzedBatteryCount)
-	}
-	
-	guard battery.power * Double(analyzedBatteryCount) > requiredPower else {
-		print("❌ \(analyzedBatteryCount)个【\(battery.name)】(\(battery.power * Double(analyzedBatteryCount))w)无法满足需求(\(requiredPower)w)，请增加分析的电池数量")
+
+	guard battery.power * Double(actualBatteryCount) > requiredPower else {
+		print("❌ \(actualBatteryCount)个【\(battery.name)】(\(battery.power * Double(actualBatteryCount))w)无法满足需求(\(requiredPower)w)，请增加分析的电池数量")
 		exit(0)
 	}
-	
-	print("🔋 可用功率:　\(String(format: "%.4f", totalBatteryPower))")
-	print("⚡️ 所需功率:　\(requiredPower)")
-	print("📦 电池数量:　\(batteryStatic.name): \(staticBatteryCount)个, \(battery.name): \(analyzedBatteryCount)个")
+
+	print("⚡️ 所需功率:　\(String(format: "%.4f", requiredPower))")
+	print("🔋 输入功率:　\(String(format: "%.4f", Double(actualBatteryCount) * battery.power))")
+	print("📦 电池数量:　\(batteryStatic.name): \(staticBatteryCount)个, \(battery.name): \(actualBatteryCount)个")
 	
 	let oneBatteryTotalEnergyGlob = battery.totalEnergy
-	let inputDoubleBatteryPowerGlob = battery.power * Double(analyzedBatteryCount)
+	let inputDoubleBatteryPowerGlob = battery.power * Double(actualBatteryCount)
 	let baselineBatteriesPerDayGlob = (inputDoubleBatteryPowerGlob * 86400.0) / oneBatteryTotalEnergyGlob
 	let requiredBatteriesPerDayGlob = (requiredPower * 86400.0) / oneBatteryTotalEnergyGlob
 	
-	print("📉 基准消耗:　\(String(format: "%.3f", baselineBatteriesPerDayGlob)) 颗/天 (\(analyzedBatteryCount)发电机常开)")
+	print("📉 基准消耗:　\(String(format: "%.3f", baselineBatteriesPerDayGlob)) 颗/天 (\(actualBatteryCount)发电机常开)")
 	print("🎯 理论最少:　\(String(format: "%.3f", requiredBatteriesPerDayGlob)) 颗/天 (100%利用率)")
 	print("💰 理论可省:　\(String(format: "%.3f", baselineBatteriesPerDayGlob - requiredBatteriesPerDayGlob)) 颗/天")
 	
@@ -241,8 +287,8 @@ for config in configs {
 		var activeStreams: [Stream] = []
 		
 		// Uniform delay = tree depth + total extra belt
-		let uniformDelay = Double(extraBeltInSteps + extraBeltOutOfSteps + steps.count) * 2.0
-		
+		let uniformDelay: Double = 0 // Double(extraBeltInSteps + extraBeltOutOfSteps + steps.count) * 2.0
+
 		var currentP = rootPeriod
 		var currentO = 0
 		
@@ -311,7 +357,7 @@ for config in configs {
 		
 		// Constants for Net Benefit Calculation
 		let oneBatteryTotalEnergy = battery.totalEnergy
-		let excessPowerWithoutSplit = (battery.power * Double(analyzedBatteryCount)) - requiredPower
+		let excessPowerWithoutSplit = (battery.power * Double(actualBatteryCount)) - requiredPower
 		let saveRateInBatteriesPerSec = (excessPowerWithoutSplit > 0.001) ? (excessPowerWithoutSplit / oneBatteryTotalEnergy) : 0.0
 		
 		if baseArrivals.isEmpty {
@@ -762,7 +808,7 @@ for config in configs {
 		print("\t⚖️ 差值:　　　\(String(format: "%.4f", solution.diff))")
 		
 		let oneBatteryTotalEnergy = battery.totalEnergy
-		let inputBatteryPower = battery.power * Double(analyzedBatteryCount)
+		let inputBatteryPower = battery.power * Double(actualBatteryCount)
 		
 		// 1. Calculate time to waste 1 battery due to overflow
 		let overflowPerSecond = stats.profile.overflowPerSecond
@@ -772,9 +818,9 @@ for config in configs {
 		let excessPowerWithoutSplit = inputBatteryPower - requiredPower
 		let secondsToSaveOneBattery = (excessPowerWithoutSplit > 0.001) ? (oneBatteryTotalEnergy / excessPowerWithoutSplit) : Double.infinity
 		
-		print("\t⏳ 理论每:　　\(formatDuration(secondsToSaveOneBattery)) 省一颗【\(config.analyzedBattery.name)】 (基准 \(analyzedBatteryCount)发电机满载)")
-		print("\t🗑 实际每:　　\(formatDuration(secondsToWasteOneBattery)) 浪费一颗【\(config.analyzedBattery.name)】 (溢出)")
-		print("\t💎 净收益:　　\(String(format: "%.6f", netBenefit)) 颗【\(config.analyzedBattery.name)】/秒, 每天: \(String(format: "%.3f", savedPerDay))颗【\(config.analyzedBattery.name)】")
+		print("\t⏳ 理论每:　　\(formatDuration(secondsToSaveOneBattery)) 省一颗【\(battery.name)】 (基准 \(actualBatteryCount)发电机满载)")
+		print("\t🗑 实际每:　　\(formatDuration(secondsToWasteOneBattery)) 浪费一颗【\(battery.name)】 (溢出)")
+		print("\t💎 净收益:　　\(String(format: "%.6f", netBenefit)) 颗【\(battery.name)】/秒, 每天: \(String(format: "%.3f", savedPerDay))颗【\(battery.name)】")
 	}
 	
 	// Iteratively search for solutions with fixed step counts
@@ -783,7 +829,7 @@ for config in configs {
 	while targetStepCount > 0 && showTopSolutions > 0 {
 		// Efficiency depends on the target structure length (Equal distance assumption)
 		// Delay includes extraBelt and the delays from passing through N splitters
-		let totalPathDelay = Double(extraBeltInSteps + extraBeltOutOfSteps + targetStepCount) * 2.0
+		let totalPathDelay: Double = 0 // Double(extraBeltInSteps + extraBeltOutOfSteps + targetStepCount) * 2.0
 		let currentEfficiency = max(0, battery.life / (battery.life + totalPathDelay))
 		
 		var bestSolutionForDepth: Solution? = nil
