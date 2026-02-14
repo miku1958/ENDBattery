@@ -29,22 +29,33 @@ extension Config {
 /// 启用的配置
 let config: Config = .goody
 
-// 额外的传送带/分流器数量（格），用于补偿分析电池数量增加带来的分流效率下降
-let extraBelt: Int = 2
+/// 迭代后: 额外的传送带/分流器数量（格）
+/// 用于补偿分析电池数量增加带来的分流效率下降
+/// 最小值为  0
+let extraBeltOutOfSteps: Int = 1
 
 /* ————————————————————————————— 选填的数据 ————————————————————————————— */
 
-/// 最终输出的方案数量, 1会输出最优方案, 3会输出前三方案, 以此类推
-let showTopSolutions = 1
+/// 迭代时: 额外的传送带/分流器数量（格）, 一般不用改
+/// 用于补偿分析电池数量增加带来的分流效率下降
+/// 会限制迭代上限
+/// 最小值为 1
+let extraBeltInSteps: Int = 1
 
-/// 需要分流的电池数量, 一般不用改
-let analyzedBatteryCount = 1
+/// 最大递归深度
+let maxDepthLimit: Int = .max
+
+/// 最终输出的方案数量, 1会输出最优方案, 3会输出前三方案, 以此类推
+var showTopSolutions: Int = 1
+
+/// 需要分流的电池数量
+let analyzedBatteryCount: Int = 1
 
 /// 发电机数量, 一般不用改
 let generatorCount = analyzedBatteryCount
 
-// 是否允许使用三分流（增加搜索空间和时间, 但可能找到更优解）
-let enableThree = true
+/// 是否允许使用三分流（增加搜索空间和时间, 但可能找到更优解）
+let enableThree: Bool = true
 
 /* ————————————————————————————— 下面不用看 ————————————————————————————— */
 
@@ -58,8 +69,8 @@ defer {
 }
 
 struct Config {
-	// --- Game Rules & Constants (游戏规则与常量) ---
-	// Batteries can only occupy one generator at a time to generate electricity
+	// --- Game Rules & Constants ---
+	// Batteries can only occupy one generator at a time
 	// Each battery lasts for 40 seconds
 	// Conveyor belt speed is 2 seconds per grid, splitter is the same
 	
@@ -119,20 +130,16 @@ struct Config {
 	let baseRequiredPower: Double
 }
 
-// 目标总功率需求 (瓦特), 核心自发电200
+// Target total power required (Watts), core generates 200W
 var requiredPower: Double = config.baseRequiredPower - 200
 
-// --- Derived Variables (衍生变量) ---
+// --- Derived Variables ---
 let batteryStatic = config.staticBattery
 let battery = config.analyzedBattery
 
-let currentDelay = Double(extraBelt) * 2.0
-let efficiency = max(0, battery.life / (battery.life + currentDelay))
-print("分流效率: \(efficiency)")
-
 let preSplit: Double = battery == .originium ? pow(2, 2) : pow(3, 2) // Hardcoded to discard the first n k-way splits. Originium power is too low, so only binary split twice.
-let depthLimit = Int(preSplit) + 1
-print("搜索深度: \(depthLimit - 1)")
+let depthLimit = min(maxDepthLimit, Int(preSplit) - extraBeltInSteps)
+print("搜索深度: \(depthLimit)")
 
 var totalBatteryPower: Double = battery.totalEnergy / 2 / preSplit
 let staticBatteryCount: Int = Int(requiredPower / batteryStatic.power)
@@ -202,12 +209,12 @@ struct OverlapProfile: Comparable, CustomStringConvertible {
 	}
 }
 
-// Model to hold a found solution
+// Holds a valid solution
 struct Solution {
 	let finalC: Double
 	let entropy: Double
-	let steps: [Step]
-	let splitValues: [Double]
+	var steps: [Step]
+	var splitValues: [Double]
 	let diff: Double
 	let overlap: OverlapProfile
 }
@@ -224,8 +231,12 @@ func getOverlapStats(steps: [Step]) -> OverlapStats {
 	struct Stream {
 		let period: Int
 		let offset: Int
+		let delay: Double
 	}
 	var activeStreams: [Stream] = []
+	
+	// Uniform delay = tree depth + total extra belt
+	let uniformDelay = Double(extraBeltInSteps + extraBeltOutOfSteps + steps.count) * 2.0
 	
 	var currentP = rootPeriod
 	var currentO = 0
@@ -241,7 +252,10 @@ func getOverlapStats(steps: [Step]) -> OverlapStats {
 		let nextO = currentO + currentP
 		
 		if step.action == .add {
-			activeStreams.append(Stream(period: branchP, offset: branchO))
+			// All streams have the same delay now
+			activeStreams.append(
+				Stream(period: branchP, offset: branchO, delay: uniformDelay)
+			)
 		}
 		
 		currentP = nextP
@@ -273,20 +287,22 @@ func getOverlapStats(steps: [Step]) -> OverlapStats {
 	let cycleTime = singleCycleDuration // maintain variable name compatibility
 	
 	// Generate events
-	var offsets: [Int] = []
+	// Consider delay for each stream (Splitter delay)
+	var arrivalTimes: [Double] = []
 	for s in activeStreams {
 		let startPhase = s.offset % cycle
 		var t = startPhase
+		// Generate one cycle worth of events, normalizing delay to steady-state phase
 		while t < cycle {
-			offsets.append(t)
+			let rawTime = Double(t) * 2.0 + s.delay
+			let time = rawTime.truncatingRemainder(dividingBy: singleCycleDuration)
+			arrivalTimes.append(time)
 			t += s.period
 		}
 	}
-	offsets.sort()
+	arrivalTimes.sort()
 	
-	let baseArrivals = offsets.map {
-		Double($0) * 2.0
-	}
+	let baseArrivals = arrivalTimes
 	
 	// Constants for Net Benefit Calculation
 	let oneBatteryTotalEnergy = battery.totalEnergy
@@ -294,7 +310,12 @@ func getOverlapStats(steps: [Step]) -> OverlapStats {
 	let saveRateInBatteriesPerSec = (excessPowerWithoutSplit > 0.001) ? (excessPowerWithoutSplit / oneBatteryTotalEnergy) : 0.0
 	
 	if baseArrivals.isEmpty {
-		return OverlapStats(cycleTime: cycleTime, overflow: 0.0, minLevel: 100000.0, profile: OverlapProfile(overflowPerSecond: 0.0, minBatteryLevel: 100000.0, netBenefitPerSecond: saveRateInBatteriesPerSec, outageDurationPer1000Sec: 0.0))
+		return OverlapStats(
+			cycleTime: cycleTime,
+			overflow: 0.0,
+			minLevel: 100000.0,
+			profile: OverlapProfile(overflowPerSecond: 0.0, minBatteryLevel: 100000.0, netBenefitPerSecond: saveRateInBatteriesPerSec, outageDurationPer1000Sec: 0.0)
+		)
 	}
 	
 	// Simulate 2 cycles
@@ -526,7 +547,12 @@ func getOverlapStats(steps: [Step]) -> OverlapStats {
 	
 	let outageDurationPer1000Sec = (measurementDuration > 0.001) ? ((totalOutageTime / measurementDuration) * 1000.0) : 0.0
 	
-	let profile = OverlapProfile(overflowPerSecond: overflowPerSec, minBatteryLevel: minLevel, netBenefitPerSecond: netBenefitPerSec, outageDurationPer1000Sec: outageDurationPer1000Sec)
+	let profile = OverlapProfile(
+		overflowPerSecond: overflowPerSec,
+		minBatteryLevel: minLevel,
+		netBenefitPerSecond: netBenefitPerSec,
+		outageDurationPer1000Sec: outageDurationPer1000Sec
+	)
 	
 	return OverlapStats(
 		cycleTime: measurementDuration,
@@ -544,38 +570,56 @@ var solutions: [Solution] = []
 
 // Recursive Search Function
 // Pass 'maxSteps' for pruning
-func binarySplit(sourceVal: Double, testBattery: Double, entropy: Double, n: Int, steps: [Step], values: [Double], maxSteps: Int, threeCount: Int, solutions: inout [Int: Solution]) {
+func binarySplit(
+	sourceVal: Double,
+	testBattery: Double,
+	entropy: Double,
+	n: Int,
+	steps: [Step],
+	values: [Double],
+	maxSteps: Int,
+	efficiency: Double,
+	currentBestSolution: inout Solution?
+) {
 	
-	guard
-		sourceVal >= 1.0,
-		steps.count < maxSteps,
-		testBattery + sourceVal > requiredPower
-	else {
+	// Target strictly the specific depth
+	if steps.count == maxSteps {
+		// Capture valid solution
+		// Check diff, power etc
+		let diff = testBattery - requiredPower
+		if diff >= 0 && diff <= 50 {
+			let profile = calculateOverlapProfile(steps: steps)
+			let sol = Solution(finalC: testBattery, entropy: entropy, steps: steps, splitValues: values, diff: diff, overlap: profile)
+			
+			// Update currentBestSolution if this one is better or if no solution exists yet
+			if isBetterSolution(sol, than: currentBestSolution) {
+				currentBestSolution = sol
+			}
+		}
 		return
 	}
 	
-	// Capture valid solution
-	let diff = testBattery - requiredPower
-	if diff >= 0 && diff <= 50 {
-		let profile = calculateOverlapProfile(steps: steps)
-		
-		let sol = Solution(
-			finalC: testBattery,
-			entropy: entropy,
-			steps: steps,
-			splitValues: values,
-			diff: diff,
-			overlap: profile
-		)
-		
-		let len = steps.count
-		if let existing = solutions[len] {
-			if isBetterSolution(sol, than: existing) {
-				solutions[len] = sol
-			}
-		} else {
-			solutions[len] = sol
-		}
+	guard sourceVal >= 1.0, steps.count < maxSteps else {
+		return
+	}
+	
+	// 剪枝 1: 已超标 (Upper Bound Pruning)
+	// 允许的公差是 50, 如果当前积累已经超出 (需求+50), 后续不论加还是弃都无法挽回(只能增加或持平)
+	guard testBattery <= requiredPower + 50 else {
+		return
+	}
+	
+	// 剪枝 2: 理论最大值检查 (Lower Bound Pruning)
+	// 计算后续能获得的理论最大功率 (假设全是二分且全部"加"的极限情况)
+	// 剩余步数
+	let remaining = Double(maxSteps - steps.count)
+	// 二分几何级数求和极限: sourceVal * eff * (1 - (1/2)^remaining)
+	// 即使开启三分, 单步收益(1/3)和保留(1/3)都小于二分(1/2), 所以二分是安全的上界
+	let maxPotential = sourceVal * efficiency * (1.0 - pow(0.5, remaining))
+	
+	// 如果 当前积累 + 理论最大 < 需求, 则这条路径走到黑也不可能满足
+	guard testBattery + maxPotential >= requiredPower else {
+		return
 	}
 	
 	// Perform Binary Split
@@ -591,8 +635,8 @@ func binarySplit(sourceVal: Double, testBattery: Double, entropy: Double, n: Int
 		steps: steps + [Step(type: .two, action: .add)],
 		values: values + [half],
 		maxSteps: maxSteps,
-		threeCount: threeCount,
-		solutions: &solutions
+		efficiency: efficiency,
+		currentBestSolution: &currentBestSolution
 	)
 	
 	// Branch 2: Discard
@@ -606,8 +650,8 @@ func binarySplit(sourceVal: Double, testBattery: Double, entropy: Double, n: Int
 		steps: steps + [Step(type: .two, action: .discard)],
 		values: values + [half],
 		maxSteps: maxSteps,
-		threeCount: threeCount,
-		solutions: &solutions
+		efficiency: efficiency,
+		currentBestSolution: &currentBestSolution
 	)
 	
 	guard enableThree else {
@@ -628,8 +672,8 @@ func binarySplit(sourceVal: Double, testBattery: Double, entropy: Double, n: Int
 		steps: steps + [Step(type: .three, action: .add)],
 		values: values + [third],
 		maxSteps: maxSteps,
-		threeCount: threeCount + 1,
-		solutions: &solutions
+		efficiency: efficiency,
+		currentBestSolution: &currentBestSolution
 	)
 	
 	// Branch 4: Ternary Discard
@@ -641,8 +685,8 @@ func binarySplit(sourceVal: Double, testBattery: Double, entropy: Double, n: Int
 		steps: steps + [Step(type: .three, action: .discard)],
 		values: values + [third],
 		maxSteps: maxSteps,
-		threeCount: threeCount + 1,
-		solutions: &solutions
+		efficiency: efficiency,
+		currentBestSolution: &currentBestSolution
 	)
 }
 
@@ -674,7 +718,9 @@ func isBetterSolution(_ new: Solution, than old: Solution?) -> Bool {
 
 // Format helpers
 func formatDuration(_ seconds: Double) -> String {
-	if seconds.isInfinite { return "∞" }
+	if seconds.isInfinite {
+		return "∞"
+	}
 	
 	if seconds >= 86400 {
 		return String(format: "%.3f 天", seconds/86400.0)
@@ -703,8 +749,9 @@ func analyzeSolutionOverlap(_ solution: Solution) {
 	let savedPerDay = (netBenefit > 0) ? (netBenefit * 86400.0) : 0.0
 	
 	print("\n==================================================")
+	print("步骤数: \(solution.steps.count)")
 	print("操作步骤: \(actions)")
-	print("--- [步骤数: \(solution.steps.count)] (净收益: \(String(format: "%.6f", netBenefit)) 颗/秒, 每天: \(String(format: "%.3f", savedPerDay))颗) ---")
+	print("--- (净收益: \(String(format: "%.6f", netBenefit)) 颗/秒, 每天: \(String(format: "%.3f", savedPerDay))颗) ---")
 	
 	print("周期: \(String(format: "%.3f", stats.cycleTime))秒 | 溢出/秒: \(String(format: "%.3f", stats.profile.overflowPerSecond)) | 最低电量: \(String(format: "%.2f", stats.minLevel))")
 	if stats.minLevel < 0.001 {
@@ -755,26 +802,45 @@ func analyzeSolutionOverlap(_ solution: Solution) {
 	}
 }
 
-var allSolutionsMap: [Int: Solution] = [:]
+// Iteratively search for solutions with fixed step counts
+var targetStepCount = depthLimit
 
-// Single complete recursion with max depth
-binarySplit(
-	sourceVal: totalBatteryPower,
-	testBattery: 0.0,
-	entropy: 0.0,
-	n: 0,
-	steps: [],
-	values: [],
-	maxSteps: depthLimit,
-	threeCount: 0,
-	solutions: &allSolutionsMap
-)
-
-// Convert map to sorted list
-let tops = allSolutionsMap.values.sorted(by: { (a, b) -> Bool in
-	return isBetterSolution(a, than: b)
-}).prefix(showTopSolutions)
-
-for sol in tops {
-	analyzeSolutionOverlap(sol)
+while targetStepCount > 0 && showTopSolutions > 0 {
+	// Efficiency depends on the target structure length (Equal distance assumption)
+	// Delay includes extraBelt and the delays from passing through N splitters
+	let totalPathDelay = Double(extraBeltInSteps + extraBeltOutOfSteps + targetStepCount) * 2.0
+	let currentEfficiency = max(0, battery.life / (battery.life + totalPathDelay))
+	
+	var bestSolutionForDepth: Solution? = nil
+	
+	binarySplit(
+		sourceVal: totalBatteryPower,
+		testBattery: 0.0,
+		entropy: 0.0,
+		n: 0,
+		steps: [],
+		values: [],
+		maxSteps: targetStepCount,
+		efficiency: currentEfficiency,
+		currentBestSolution: &bestSolutionForDepth
+	)
+	
+	if var bestSolution = bestSolutionForDepth {
+		var discardCount = 0
+		
+		while let last = bestSolution.steps.last, last.action == .discard {
+			bestSolution.steps.removeLast()
+			bestSolution.splitValues.removeLast()
+			discardCount += 1
+		}
+		
+		if targetStepCount > 0 {
+			targetStepCount -= discardCount
+		}
+		
+		analyzeSolutionOverlap(bestSolution)
+		showTopSolutions -= 1
+	}
+	
+	targetStepCount -= 1
 }
