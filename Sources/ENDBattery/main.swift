@@ -612,20 +612,22 @@ func analyzeSolutionOverlap(
 		return "\(typeStr)\(actStr)"
 	}.joined(separator: "  ")
 
+	let separater = "⏭"
 	let preActions =
-	solution.preSplitBits.map { (bit, count) -> [String] in
-		let typeStr = (Int(bit) == 2) ? "2" : "3"
-		return Array(repeating: "\(typeStr)🔴", count: count)
-	}.flatMap(\.self).joined(separator: "  ") + "  ⏭ "
-	let allActions = [preActions, actions].filter { !$0.isEmpty }.joined(separator: "  ")
+		solution.preSplitBits.map { (bit, count) -> [String] in
+			let typeStr = (Int(bit) == 2) ? "2" : "3"
+			return Array(repeating: "\(typeStr)🔴", count: count)
+		}.flatMap(\.self).joined(separator: "  ")
 
 	// Calculate savePerDay again for display
 	let netBenefit = stats.profile.netBenefitPerSecond
 	let savedPerDay = (netBenefit > 0) ? (netBenefit * 86400.0) : 0.0
 
 	// print("\n==================================================")
-	print("\t👣 步骤数:　　\(solution.preSplitBits.count + solution.steps.count)")
-	print("\t🛠 操作步骤:　\(allActions)")
+
+	let preActionCount = "\(solution.preSplitBits.map(\.value).reduce(0, +))"
+	print("\t👣 步骤数:　　\(preActionCount)\(String(repeating: "　", count: preActions.count - preActionCount.count))\(separater)   \(solution.steps.count)")
+	print("\t🛠 操作步骤:　\(preActions)  \(separater)   \(actions)")
 
 	print("\t🔄 周期:　　　\(String(format: "%.3f", stats.cycleTime))秒")
 	if stats.minLevel < 0.001 {
@@ -681,7 +683,7 @@ for config in configs {
 	/// 需要分流的电池数量
 	var analyzedBatteryCount: Int = Int(ceil(totalPower / battery.power))
 
-	var solutions: [Solution?] = Array(repeating: nil, count: maxDepthLimit)
+	var solutions: [[Int: Int]: [Solution?]] = [:]
 
 	while analyzedBatteryCount > 0 {
 		defer {
@@ -697,221 +699,209 @@ for config in configs {
 
 		// --- Derived Variables ---
 
-		let depthLimit: Int
-		let preSplitBits: [Int: Int]
-		let preSplit: Double
-		do {
-			var targetBits: [Int: Int] = [:]
-			var targetPreSplit: Double = 1
-			var targetdepthLimit: Int = 1000
-
-			func findBits(previousPower: Double, splitFactor: Double, bits: [Int: Int]) {
-				let preSplit = bits.reduce(1.0) {
-					$0 * pow(Double($1.key), Double($1.value))
-				}
-				guard preSplit <= maxDepthLimit else {
-					return
-				}
-				let currentPower = previousPower * splitFactor
-
-				let maxRemainingBitCount = Int(ceil(log2(currentPower)))
-				let bitLimit = Int(preSplit) - extraBeltInSteps
-
-				guard maxRemainingBitCount >= bitLimit else {
-					return
-				}
-				if (preSplit == targetPreSplit && targetBits.count > bits.count)
-					|| preSplit > targetPreSplit
-				{
-					targetBits = bits
-					targetPreSplit = preSplit
-					targetdepthLimit = bitLimit
-				}
-
-				findBits(
-					previousPower: currentPower,
-					splitFactor: 1 / 2,
-					bits: {
-						var bits = bits
-						bits[2, default: 0] += 1
-						return bits
-					}()
-				)
-				findBits(
-					previousPower: currentPower,
-					splitFactor: 1 / 3,
-					bits: {
-						var bits = bits
-						bits[3, default: 0] += 1
-						return bits
-					}()
-				)
+		var allPreSplitBits: Set<[Int: Int]> = []
+		func findBits(previousPower: Double, splitFactor: Double, bits: [Int: Int]) {
+			let preSplit = bits.reduce(1.0) {
+				$0 * pow(Double($1.key), Double($1.value))
 			}
+			guard preSplit <= Double(maxDepthLimit) else {
+				return
+			}
+			let currentPower = previousPower * splitFactor
+			let maxRemainingBitCount = Int(ceil(log2(currentPower)))
+			let bitLimit = Int(preSplit) - extraBeltInSteps
+			guard maxRemainingBitCount >= bitLimit else {
+				return
+			}
+			allPreSplitBits.insert(bits)
 			findBits(
-				previousPower: battery.totalEnergy / 2,
-				splitFactor: 1,
-				bits: [:]
+				previousPower: currentPower,
+				splitFactor: 1 / 2,
+				bits: {
+					var bits = bits
+					bits[2, default: 0] += 1
+					return bits
+				}()
 			)
-			preSplitBits = targetBits
-			preSplit = targetPreSplit
-			depthLimit = min(maxDepthLimit, targetdepthLimit)
-		}
-
-		let totalBatteryPower: Double = battery.totalEnergy / 2 / preSplit
-
-		guard battery.power * Double(actualBatteryCount) > requiredPower else {
-			print(
-				"❌ \(actualBatteryCount)个【\(battery.name)】(\(battery.power * Double(actualBatteryCount))w)无法满足需求(\(requiredPower)w)，请增加分析的电池数量"
+			findBits(
+				previousPower: currentPower,
+				splitFactor: 1 / 3,
+				bits: {
+					var bits = bits
+					bits[3, default: 0] += 1
+					return bits
+				}()
 			)
-			exit(0)
 		}
+		findBits(
+			previousPower: battery.totalEnergy / 2,
+			splitFactor: 1,
+			bits: [:]
+		)
 
-		func calculateOverlapProfile(steps: [Step]) -> OverlapProfile {
-			return getOverlapStats(
-				steps: steps,
-				battery: battery,
-				actualBatteryCount: actualBatteryCount,
-				requiredPower: requiredPower,
-				analyzedBatteryCount: analyzedBatteryCount,
-				preSplit: preSplit
-			).profile
-		}
+		// 循环所有bits组合，逐个处理
+		for preSplitBits in allPreSplitBits {
+			if solutions[preSplitBits] == nil {
+				solutions[preSplitBits] = Array(repeating: nil, count: maxDepthLimit)
+			}
+			let preSplit = preSplitBits.reduce(1.0) {
+				$0 * pow(Double($1.key), Double($1.value))
+			}
+			let depthLimit = min(maxDepthLimit, Int(preSplit) - extraBeltInSteps)
 
-		// Recursive Search Function
-		// Pass 'maxSteps' for pruning
-		func binarySplit(
-			sourceVal: Double,
-			testBattery: Double,
-			entropy: Double,
-			n: Int,
-			steps: [Step],
-			values: [Double]
-		) {
-			guard
-				sourceVal >= 1.0,
-				steps.count < depthLimit,
-				testBattery + sourceVal > requiredPower
-			else {
-				return
+			let totalBatteryPower: Double = battery.totalEnergy / 2 / preSplit
+
+			guard battery.power * Double(actualBatteryCount) > requiredPower else {
+				continue
 			}
 
-			let diff = testBattery - requiredPower
-
-			// 剪枝 1: 已超标 (Upper Bound Pruning)
-			// 允许的公差是 50, 如果当前积累已经超出 (需求+50), 后续不论加还是弃都无法挽回(只能增加或持平)
-			guard diff <= 50 else {
-				return
-			}
-
-			// Capture valid solution
-			if diff >= 0, steps.last?.action == .add {
-				let profile = calculateOverlapProfile(steps: steps)
-				let sol = Solution(
-					finalC: testBattery,
-					entropy: entropy,
-					preSplitBits: preSplitBits,
+			func calculateOverlapProfile(steps: [Step]) -> OverlapProfile {
+				return getOverlapStats(
 					steps: steps,
-					splitValues: values,
-					diff: diff,
-					overlap: profile,
+					battery: battery,
 					actualBatteryCount: actualBatteryCount,
 					requiredPower: requiredPower,
 					analyzedBatteryCount: analyzedBatteryCount,
-					staticBatteryCount: staticBatteryCount,
-					depthLimit: depthLimit
-				)
-				let index = steps.count
-				if let existing = solutions[index] {
-					if isBetterSolution(sol, than: existing) {
-						solutions[index] = sol
-					}
-				} else {
-					solutions[index] = sol
+					preSplit: preSplit
+				).profile
+			}
+
+			// Recursive Search Function
+			// Pass 'maxSteps' for pruning
+			func binarySplit(
+				sourceVal: Double,
+				testBattery: Double,
+				entropy: Double,
+				n: Int,
+				steps: [Step],
+				values: [Double]
+			) {
+				guard
+					sourceVal >= 1.0,
+					steps.count < depthLimit,
+					testBattery + sourceVal > requiredPower
+				else {
+					return
 				}
+
+				let diff = testBattery - requiredPower
+
+				// 剪枝 1: 已超标 (Upper Bound Pruning)
+				// 允许的公差是 50, 如果当前积累已经超出 (需求+50), 后续不论加还是弃都无法挽回(只能增加或持平)
+				guard diff <= 50 else {
+					return
+				}
+
+				// Capture valid solution
+				if diff >= 0, steps.last?.action == .add {
+					let profile = calculateOverlapProfile(steps: steps)
+					let sol = Solution(
+						finalC: testBattery,
+						entropy: entropy,
+						preSplitBits: preSplitBits,
+						steps: steps,
+						splitValues: values,
+						diff: diff,
+						overlap: profile,
+						actualBatteryCount: actualBatteryCount,
+						requiredPower: requiredPower,
+						analyzedBatteryCount: analyzedBatteryCount,
+						staticBatteryCount: staticBatteryCount,
+						depthLimit: depthLimit
+					)
+					let index = steps.count
+					if let existing = solutions[preSplitBits]![index] {
+						if isBetterSolution(sol, than: existing) {
+							solutions[preSplitBits]![index] = sol
+						}
+					} else {
+						solutions[preSplitBits]![index] = sol
+					}
+				}
+
+				// 剪枝 2: 理论最大值检查 (Lower Bound Pruning)
+				// 计算后续能获得的理论最大功率 (假设全是二分且全部"加"的极限情况)
+				// 剩余步数
+				let remaining = Double(depthLimit - steps.count)
+				// 二分几何级数求和极限: sourceVal * (1 - (1/2)^remaining)
+				// 即使开启三分, 单步收益(1/3)和保留(1/3)都小于二分(1/2), 所以二分是安全的上界
+				let maxPotential = sourceVal * (1.0 - pow(0.5, remaining))
+
+				// 如果 当前积累 + 理论最大 < 需求, 则这条路径走到黑也不可能满足
+				guard testBattery + maxPotential >= requiredPower else {
+					return
+				}
+
+				// Perform Binary Split
+
+				let half = sourceVal / 2.0
+
+				// Branch 1: Add to C
+				binarySplit(
+					sourceVal: half,
+					testBattery: testBattery + half,
+					entropy: entropy,
+					n: n + 1,
+					steps: steps + [Step(type: .two, action: .add)],
+					values: values + [half]
+				)
+
+				// Branch 2: Discard
+				// Entropy increases by 1/(2^n).
+				let entropyIncrement = 1.0 / pow(2.0, Double(n))
+				binarySplit(
+					sourceVal: half,
+					testBattery: testBattery,
+					entropy: entropy + entropyIncrement,
+					n: n + 1,
+					steps: steps + [Step(type: .two, action: .discard)],
+					values: values + [half]
+				)
+
+				guard enableThree else {
+					return
+				}
+
+				// Perform Ternary Split
+				// 1/3 to garbage (implicit), 1/3 to next recursion, 1/3 to process
+				let third = sourceVal / 3.0
+
+				// Branch 3: Ternary Add
+				// entropy unchanged, n unchanged, actions/values unchanged
+				binarySplit(
+					sourceVal: third,
+					testBattery: testBattery + third,
+					entropy: entropy,
+					n: n,
+					steps: steps + [Step(type: .three, action: .add)],
+					values: values + [third]
+				)
+
+				// Branch 4: Ternary Discard
+				binarySplit(
+					sourceVal: third,
+					testBattery: testBattery,
+					entropy: entropy,
+					n: n,
+					steps: steps + [Step(type: .three, action: .discard)],
+					values: values + [third]
+				)
 			}
 
-			// 剪枝 2: 理论最大值检查 (Lower Bound Pruning)
-			// 计算后续能获得的理论最大功率 (假设全是二分且全部"加"的极限情况)
-			// 剩余步数
-			let remaining = Double(depthLimit - steps.count)
-			// 二分几何级数求和极限: sourceVal * (1 - (1/2)^remaining)
-			// 即使开启三分, 单步收益(1/3)和保留(1/3)都小于二分(1/2), 所以二分是安全的上界
-			let maxPotential = sourceVal * (1.0 - pow(0.5, remaining))
+			// Iteratively search for solutions with fixed step counts
 
-			// 如果 当前积累 + 理论最大 < 需求, 则这条路径走到黑也不可能满足
-			guard testBattery + maxPotential >= requiredPower else {
-				return
-			}
-
-			// Perform Binary Split
-
-			let half = sourceVal / 2.0
-
-			// Branch 1: Add to C
 			binarySplit(
-				sourceVal: half,
-				testBattery: testBattery + half,
-				entropy: entropy,
-				n: n + 1,
-				steps: steps + [Step(type: .two, action: .add)],
-				values: values + [half]
-			)
-
-			// Branch 2: Discard
-			// Entropy increases by 1/(2^n).
-			let entropyIncrement = 1.0 / pow(2.0, Double(n))
-			binarySplit(
-				sourceVal: half,
-				testBattery: testBattery,
-				entropy: entropy + entropyIncrement,
-				n: n + 1,
-				steps: steps + [Step(type: .two, action: .discard)],
-				values: values + [half]
-			)
-
-			guard enableThree else {
-				return
-			}
-
-			// Perform Ternary Split
-			// 1/3 to garbage (implicit), 1/3 to next recursion, 1/3 to process
-			let third = sourceVal / 3.0
-
-			// Branch 3: Ternary Add
-			// entropy unchanged, n unchanged, actions/values unchanged
-			binarySplit(
-				sourceVal: third,
-				testBattery: testBattery + third,
-				entropy: entropy,
-				n: n,
-				steps: steps + [Step(type: .three, action: .add)],
-				values: values + [third]
-			)
-
-			// Branch 4: Ternary Discard
-			binarySplit(
-				sourceVal: third,
-				testBattery: testBattery,
-				entropy: entropy,
-				n: n,
-				steps: steps + [Step(type: .three, action: .discard)],
-				values: values + [third]
+				sourceVal: totalBatteryPower,
+				testBattery: 0.0,
+				entropy: 0.0,
+				n: 0,
+				steps: [],
+				values: []
 			)
 		}
-
-		// Iteratively search for solutions with fixed step counts
-
-		binarySplit(
-			sourceVal: totalBatteryPower,
-			testBattery: 0.0,
-			entropy: 0.0,
-			n: 0,
-			steps: [],
-			values: []
-		)
 	}
 
-	let tops = solutions.compactMap(\.self).sorted(by: { (a, b) -> Bool in
+	let tops = solutions.values.flatMap(\.self).compactMap(\.self).sorted(by: { (a, b) -> Bool in
 		return isBetterSolution(a, than: b)
 	}).prefix(showTopSolutions)
 
