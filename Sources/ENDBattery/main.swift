@@ -59,7 +59,7 @@ struct Config {
 	let name: String
 	// --- Game Rules & Constants ---
 	// Batteries can only occupy one generator at a time
-	// Each battery lasts for 40 seconds
+	// Each battery lasts for \(life) seconds
 	// Conveyor belt speed is 2 seconds per grid, splitter is the same
 
 	enum Battery {
@@ -218,8 +218,15 @@ func getOverlapStats(
 	actualBatteryCount: Int,
 	requiredPower: Double,
 	analyzedBatteryCount: Int,
-	preSplit: Double
+	preSplit: Double,
+	minOverflow: Double
 ) -> OverlapStats {
+	// When the battery is depleted, the core's power is used. 
+	// When the total battery power exceeds the required power, the core is charged until full, after which any excess power is wasted.
+	// The conveyor belt/splitter moves items one tile every two seconds.
+
+	let maxLevel: Double = 100000 // The capacity of the core. 
+
 	let rootPeriod: Int = Int(2 * preSplit)
 	struct Stream {
 		let period: Int
@@ -273,7 +280,6 @@ func getOverlapStats(
 	// We simulate from t=0 to establish the correct battery level state,
 	// then measure stats only during the 2nd cycle (cycleTime to 2*cycleTime).
 	let singleCycleDuration = Double(cycle)
-	let cycleTime = singleCycleDuration  // maintain variable name compatibility
 
 	// Generate events
 	// Consider delay for each stream (Splitter delay)
@@ -295,19 +301,23 @@ func getOverlapStats(
 
 	// Constants for Net Benefit Calculation
 	let oneBatteryTotalEnergy = battery.totalEnergy
-	let excessPowerWithoutSplit = (battery.power * Double(actualBatteryCount)) - requiredPower
+	let excessPowerWithoutSplit = battery.power * Double(actualBatteryCount) - requiredPower
+	
 	let saveRateInBatteriesPerSec =
 		(excessPowerWithoutSplit > 0.001)
 		? (excessPowerWithoutSplit / oneBatteryTotalEnergy) : 0.0
 
 	if baseArrivals.isEmpty {
 		return OverlapStats(
-			cycleTime: cycleTime,
+			cycleTime: singleCycleDuration,
 			overflow: 0.0,
-			minLevel: 100000.0,
+			minLevel: maxLevel,
 			profile: OverlapProfile(
-				overflowPerSecond: 0.0, minBatteryLevel: 100000.0,
-				netBenefitPerSecond: saveRateInBatteriesPerSec, outageDurationPer1000Sec: 0.0)
+				overflowPerSecond: minOverflow,
+				minBatteryLevel: maxLevel,
+				netBenefitPerSecond: saveRateInBatteriesPerSec - (minOverflow / oneBatteryTotalEnergy),
+				outageDurationPer1000Sec: 0.0
+			)
 		)
 	}
 
@@ -378,13 +388,12 @@ func getOverlapStats(
 
 	var active = 0
 	var lastT = 0.0
-	var currentLevel = 100000.0  // Correctly start full at t=0
-	let maxLevel = 100000.0
+	var currentLevel = maxLevel  // Correctly start full at t=0
 
 	// Stats accumulators (only applied within measurement window)
 	var totalOverflow = 0.0
 	var totalOutageTime = 0.0
-	var minLevel = 100000.0
+	var minLevel = maxLevel
 
 	// To properly track minLevel within the window, we should initialize it to currentLevel
 	// when we first cross into the measurement window, or just track it globally and
@@ -535,7 +544,9 @@ func getOverlapStats(
 		minLevel = currentLevel
 	}
 
-	let overflowPerSec = totalOverflow / measurementDuration
+	let measuredOverflowPerSec = totalOverflow / measurementDuration
+	let overflowPerSec = max(measuredOverflowPerSec, minOverflow)
+
 	let wasteRateInBatteriesPerSec =
 		(overflowPerSec > 0.000001) ? (overflowPerSec / oneBatteryTotalEnergy) : 0.0
 	let netBenefitPerSec = saveRateInBatteriesPerSec - wasteRateInBatteriesPerSec
@@ -574,7 +585,8 @@ func analyzeSolutionOverlap(
 		actualBatteryCount: solution.actualBatteryCount,
 		requiredPower: solution.requiredPower,
 		analyzedBatteryCount: solution.analyzedBatteryCount,
-		preSplit: preSplit
+		preSplit: preSplit,
+		minOverflow: solution.diff
 	)
 
 	if solution.analyzedBatteryCount != lastAnalyzedBatteryCount {
@@ -641,10 +653,12 @@ func analyzeSolutionOverlap(
 	let inputBatteryPower = battery.power * Double(solution.actualBatteryCount)
 
 	// 1. Calculate time to waste 1 battery due to overflow
-	let overflowPerSecond = stats.profile.overflowPerSecond
+	// Use max(overflowPerSecond, diff) because if average power > required, it MUST overflow eventually,
+	// even if the short simulation window didn't capture the battery hitting 100% capacity.
+	let effectiveOverflow = max(stats.profile.overflowPerSecond, solution.diff)
 	let secondsToWasteOneBattery: Double =
-		(overflowPerSecond > 0.001)
-		? (oneBatteryTotalEnergy / overflowPerSecond) : Double.infinity
+		(effectiveOverflow > 0.001)
+		? (oneBatteryTotalEnergy / effectiveOverflow) : Double.infinity
 
 	// 2. Calculate time to save 1 battery
 	let excessPowerWithoutSplit = inputBatteryPower - solution.requiredPower
@@ -755,17 +769,6 @@ for config in configs {
 				continue
 			}
 
-			func calculateOverlapProfile(steps: [Step]) -> OverlapProfile {
-				return getOverlapStats(
-					steps: steps,
-					battery: battery,
-					actualBatteryCount: actualBatteryCount,
-					requiredPower: requiredPower,
-					analyzedBatteryCount: analyzedBatteryCount,
-					preSplit: preSplit
-				).profile
-			}
-
 			// Recursive Search Function
 			// Pass 'maxSteps' for pruning
 			func binarySplit(
@@ -787,14 +790,26 @@ for config in configs {
 				let diff = testBattery - requiredPower
 
 				// 剪枝 1: 已超标 (Upper Bound Pruning)
-				// 允许的公差是 50, 如果当前积累已经超出 (需求+50), 后续不论加还是弃都无法挽回(只能增加或持平)
+				// 后续不论加还是弃都无法挽回(只能增加或持平)
 				guard diff <= 50 else {
 					return
 				}
 
 				// Capture valid solution
+				// IMPORTANT: We must pass at least 'diff' as the 'minOverflow' to calculate the profile.
+				// Otherwise getOverlapStats might see 0 overflow in short simulation and rank highly wasteful solutions
+				// better than low-waste solutions.
 				if diff >= 0, steps.last?.action == .add {
-					let profile = calculateOverlapProfile(steps: steps)
+					let profile = getOverlapStats(
+						steps: steps,
+						battery: battery,
+						actualBatteryCount: actualBatteryCount,
+						requiredPower: requiredPower,
+						analyzedBatteryCount: analyzedBatteryCount,
+						preSplit: preSplit,
+						minOverflow: diff
+					).profile
+
 					let sol = Solution(
 						finalC: testBattery,
 						entropy: entropy,
