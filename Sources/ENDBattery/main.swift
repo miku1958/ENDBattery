@@ -44,6 +44,9 @@ var showTopSolutions: Int = 1
 /// 是否允许使用三分流（增加搜索空间和时间, 但可能找到更优解）
 let enableThree: Bool = true
 
+/// 安全阈值: 如果电量曾经低于这个值, 方案会被严重降级. 这个值越高越安全, 但可能错过一些边缘方案. 建议设置在15%左右 (15000), 也可以根据需求调整.
+let safetyThreshold = 0.15
+
 /* ————————————————————————————— 下面不用看 ————————————————————————————— */
 
 import Foundation
@@ -54,6 +57,9 @@ defer {
 	let elapsed = Date().timeIntervalSince(startTime)
 	print(String(format: "\n🕐 总耗时: %.2f 秒", elapsed))
 }
+
+// The capacity of the core.
+let coreMaxCapacity: Double = 100000
 
 struct Config {
 	let name: String
@@ -136,6 +142,8 @@ struct Step: Equatable {
 struct OverlapProfile: Comparable {
 	let overflowPerSecond: Double
 	let minBatteryLevel: Double
+	let endBatteryLevel: Double
+	let hitFullCharge: Bool
 	let netBenefitPerSecond: Double  // Net savings in batteries per second
 	let outageDurationPer1000Sec: Double  // Average outage duration per 1000 seconds
 
@@ -143,6 +151,21 @@ struct OverlapProfile: Comparable {
 		if abs(lhs.outageDurationPer1000Sec - rhs.outageDurationPer1000Sec) > 1e-9 {
 			return lhs.outageDurationPer1000Sec < rhs.outageDurationPer1000Sec  // Lower outage is better
 		}
+
+		// Prioritize sustainability: If it never hits 100% capacity again, it's likely draining.
+		if lhs.hitFullCharge != rhs.hitFullCharge {
+			return lhs.hitFullCharge  // Prefer solutions that fully recharge
+		}
+
+		// Prioritize SAFETY: A solution that dips close to zero is risky.
+		let lhsLow = lhs.minBatteryLevel < coreMaxCapacity * safetyThreshold
+		let rhsLow = rhs.minBatteryLevel < coreMaxCapacity * safetyThreshold
+		if lhsLow || rhsLow {
+			if abs(lhs.minBatteryLevel - rhs.minBatteryLevel) > 1e-9 {
+				return lhs.minBatteryLevel > rhs.minBatteryLevel
+			}
+		}
+
 		if abs(lhs.netBenefitPerSecond - rhs.netBenefitPerSecond) > 1e-9 {
 			return lhs.netBenefitPerSecond > rhs.netBenefitPerSecond  // Higher benefit is better
 		}
@@ -221,11 +244,9 @@ func getOverlapStats(
 	preSplit: Double,
 	minOverflow: Double
 ) -> OverlapStats {
-	// When the battery is depleted, the core's power is used. 
+	// When the battery is depleted, the core's power is used.
 	// When the total battery power exceeds the required power, the core is charged until full, after which any excess power is wasted.
 	// The conveyor belt/splitter moves items one tile every two seconds.
-
-	let maxLevel: Double = 100000 // The capacity of the core. 
 
 	let rootPeriod: Int = Int(2 * preSplit)
 	struct Stream {
@@ -302,7 +323,7 @@ func getOverlapStats(
 	// Constants for Net Benefit Calculation
 	let oneBatteryTotalEnergy = battery.totalEnergy
 	let excessPowerWithoutSplit = battery.power * Double(actualBatteryCount) - requiredPower
-	
+
 	let saveRateInBatteriesPerSec =
 		(excessPowerWithoutSplit > 0.001)
 		? (excessPowerWithoutSplit / oneBatteryTotalEnergy) : 0.0
@@ -311,23 +332,55 @@ func getOverlapStats(
 		return OverlapStats(
 			cycleTime: singleCycleDuration,
 			overflow: 0.0,
-			minLevel: maxLevel,
+			minLevel: coreMaxCapacity,
+			endLevel: coreMaxCapacity,
 			profile: OverlapProfile(
 				overflowPerSecond: minOverflow,
-				minBatteryLevel: maxLevel,
-				netBenefitPerSecond: saveRateInBatteriesPerSec - (minOverflow / oneBatteryTotalEnergy),
+				minBatteryLevel: coreMaxCapacity,
+				endBatteryLevel: coreMaxCapacity,
+				hitFullCharge: true,
+				netBenefitPerSecond: saveRateInBatteriesPerSec
+					- (minOverflow / oneBatteryTotalEnergy),
 				outageDurationPer1000Sec: 0.0
 			)
 		)
 	}
 
-	// Simulate 2 cycles
-	var allArrivals: [Double] = []
-	for t in baseArrivals {
-		allArrivals.append(t)
+	// Dynamics Simulation Duration
+	// We aim for CONSTANT simulation complexity approximately.
+	// Complexity ~ Duration * AnalyzedBatteryCount.
+	// AdjustedTargetDuration scales inversely with complexity.
+	let baseTargetDuration = 86400.0  // Base 24h for single battery
+	let adjustedTargetDuration = baseTargetDuration / Double(max(1, analyzedBatteryCount))
+
+	// Determine how many cycles
+	let computedCycles = Int(ceil(adjustedTargetDuration / singleCycleDuration))
+
+	// Enforce Logic:
+	// 1. If Cycle is VERY short (< 1h), ensure at least 12h coverage to detect drain.
+	// 2. If Cycle is VERY long (> 12h), 1 cycle is enough (Start 100k -> End < 100k detects drain).
+	// 3. Otherwise default to computedCycles, min 1.
+
+	var simCycleCount = max(1, computedCycles)
+	if singleCycleDuration < 3600.0 {
+		let shortCycleTarget = Int(ceil(43200.0 / singleCycleDuration))
+		simCycleCount = max(simCycleCount, shortCycleTarget)
 	}
-	for t in baseArrivals {
-		allArrivals.append(t + singleCycleDuration)
+
+	// Measurement Window Logic:
+	// If simCycleCount > 1: Skip first cycle (Warmup). Measure [Cycle 1 ... Cycle N].
+	// If simCycleCount == 1: No Warmup. Measure [0 ... Cycle 0].
+	// (Reasoning: If cycle is 20h long, simulated 0-20h is good enough. Start 100k -> End <100k = Drain).
+
+	let measureStart = (simCycleCount > 1) ? singleCycleDuration : 0.0
+	let measureEnd = Double(simCycleCount) * singleCycleDuration
+	let recoveryCheckStart = measureEnd - singleCycleDuration
+
+	var allArrivals: [Double] = []
+	for i in 0..<simCycleCount {
+		for t in baseArrivals {
+			allArrivals.append(t + Double(i) * singleCycleDuration)
+		}
 	}
 
 	// Distribute to Generators Alternately (Round Robin)
@@ -381,26 +434,26 @@ func getOverlapStats(
 		return a.time < b.time
 	}
 
-	// Measurement Window: [cycleTime, 2*cycleTime]
-	let measureStart = singleCycleDuration
-	let measureEnd = 2.0 * singleCycleDuration
+	// Measurement Window: [cycleTime, simCycleCount*cycleTime]
+	// Using simCycleCount logic from above.
+	// If simCycleCount == 1, we simulate 0..Cycle1.
+	// If simCycleCount > 1, we simulate 0..CycleN, measuring Cycle1..CycleN.
+
 	let measurementDuration = measureEnd - measureStart
 
 	var active = 0
 	var lastT = 0.0
-	var currentLevel = maxLevel  // Correctly start full at t=0
+	var currentLevel = coreMaxCapacity  // Correctly start full at t=0
 
 	// Stats accumulators (only applied within measurement window)
 	var totalOverflow = 0.0
 	var totalOutageTime = 0.0
-	var minLevel = maxLevel
+	var minLevel = coreMaxCapacity
+	// Track if we ever return to full charge within the measurement window
+	var hitFullCharge = false
 
-	// To properly track minLevel within the window, we should initialize it to currentLevel
-	// when we first cross into the measurement window, or just track it globally and
-	// realize that if it drops low in cycle 1, it matters.
-	// However, the requirement is "calculate ... in a period".
-	// Usually this means steady state. We will track minLevel only inside the window.
-	var minLevelInitialized = false
+	// If we are simulating 1 cycle from 0, minLevel should initialize with start value
+	var minLevelInitialized = (measureStart <= 0.0001)
 
 	for e in pevents {
 		let t = e.time
@@ -429,8 +482,8 @@ func getOverlapStats(
 			// Handle clamping and stats
 			var nextLevel = possibleLevel
 
-			if possibleLevel > maxLevel {
-				nextLevel = maxLevel
+			if possibleLevel > coreMaxCapacity {
+				nextLevel = coreMaxCapacity
 			} else if possibleLevel <= 0 {
 				nextLevel = 0
 			}
@@ -466,14 +519,14 @@ func getOverlapStats(
 				var levelAtWindowEntry = levelBefore
 				if dtPre > 0 {
 					let p = levelBefore + netPower * dtPre
-					levelAtWindowEntry = min(maxLevel, max(0, p))
+					levelAtWindowEntry = min(coreMaxCapacity, max(0, p))
 				}
 
 				// Now simulate from levelAtWindowEntry over overlapDt
 				let pEnd = levelAtWindowEntry + netPower * overlapDt
 
-				if pEnd > maxLevel {
-					totalOverflow += (pEnd - maxLevel)
+				if pEnd > coreMaxCapacity {
+					totalOverflow += (pEnd - coreMaxCapacity)
 				}
 
 				if pEnd <= 0 {
@@ -491,8 +544,21 @@ func getOverlapStats(
 					minLevel = min(minLevel, levelAtWindowEntry)
 				}
 				// Also check end of window segment (clamped)
-				let levelAtWindowExit = min(maxLevel, max(0, pEnd))
+				let levelAtWindowExit = min(coreMaxCapacity, max(0, pEnd))
 				minLevel = min(minLevel, levelAtWindowExit)
+
+				// Track if we returned to 100% capacity during the measurement window
+				// We prioritize recent recovery (last 5 cycles) to ensure it's not draining
+				if overlapEnd >= recoveryCheckStart {
+					if levelAtWindowExit >= (coreMaxCapacity - 0.001) {
+						hitFullCharge = true
+					}
+				}
+
+				// Critical Check: If we hit ZERO (or very close) inside the window, this is a failure.
+				// Even if average stats are okay, we can't accept outages.
+				// However, outages are already penalized by outageDuration.
+				// But maybe the penalty isn't high enough?
 			}
 
 			// Apply full segment update to state for next iteration
@@ -524,9 +590,9 @@ func getOverlapStats(
 
 			let possibleLevel = currentLevel + netPower * dt
 
-			if possibleLevel > maxLevel {
-				totalOverflow += (possibleLevel - maxLevel)
-				currentLevel = maxLevel  // visualization state
+			if possibleLevel > coreMaxCapacity {
+				totalOverflow += (possibleLevel - coreMaxCapacity)
+				currentLevel = coreMaxCapacity  // visualization state
 			} else if possibleLevel <= 0 {
 				let timeToZero = (netPower < -0.00001) ? (currentLevel / abs(netPower)) : 0.0
 				let outage = max(0, dt - timeToZero)
@@ -557,6 +623,8 @@ func getOverlapStats(
 	let profile = OverlapProfile(
 		overflowPerSecond: overflowPerSec,
 		minBatteryLevel: minLevel,
+		endBatteryLevel: currentLevel,
+		hitFullCharge: hitFullCharge,
 		netBenefitPerSecond: netBenefitPerSec,
 		outageDurationPer1000Sec: outageDurationPer1000Sec
 	)
@@ -565,6 +633,7 @@ func getOverlapStats(
 		cycleTime: measurementDuration,
 		overflow: totalOverflow,
 		minLevel: minLevel,
+		endLevel: currentLevel,
 		profile: profile
 	)
 }
@@ -638,10 +707,15 @@ func analyzeSolutionOverlap(
 	// print("\n==================================================")
 
 	let preActionCount = "\(solution.preSplitBits.map(\.value).reduce(0, +))"
-	print("\t👣 步骤数:　　\(preActionCount)\(String(repeating: "　", count: preActions.count - preActionCount.count))\(separater)   \(solution.steps.count)")
+	print(
+		"\t👣 步骤数:　　\(preActionCount)\(String(repeating: "　", count: preActions.count - preActionCount.count))\(separater)   \(solution.steps.count)"
+	)
 	print("\t🛠 操作步骤:　\(preActions)  \(separater)   \(actions)")
 
 	print("\t🔄 周期:　　　\(String(format: "%.3f", stats.cycleTime))秒")
+	print("\t📉 最低电量:　\(String(format: "%.4f", stats.minLevel))")
+	print("\t📊 结束电量:　\(String(format: "%.4f", stats.endLevel))")
+	print("\t✅ 满电复位:　\(stats.profile.hitFullCharge ? "是" : "否")")
 	if stats.minLevel < 0.001 {
 		let outageStr = String(format: "%.3f", stats.profile.outageDurationPer1000Sec)
 		print("\t⚠️ 警告:　　该方案可能会导致短暂停电 (最低电量归零), 平均停电: \(outageStr)秒/1000秒 ⚠️")
@@ -681,6 +755,7 @@ struct OverlapStats {
 	let cycleTime: Double
 	let overflow: Double
 	let minLevel: Double
+	let endLevel: Double
 	let profile: OverlapProfile
 }
 
