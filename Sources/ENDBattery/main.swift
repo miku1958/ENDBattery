@@ -143,10 +143,10 @@ struct OverlapProfile: Comparable {
 	let minBatteryLevel: Double
 	let endBatteryLevel: Double
 	let hitFullCharge: Bool
-	
+
 	/// Net batteries saved per second
 	let netBenefitPerSecond: Double
-	
+
 	/// Avg outage duration per 1000s
 	let outageDurationPer1000Sec: Double
 
@@ -183,7 +183,7 @@ struct OverlapProfile: Comparable {
 }
 
 // Holds a valid solution
-struct Solution {
+class Solution {
 	let finalC: Double
 	let entropy: Double
 	var preSplitBits: [Int: Int]
@@ -196,6 +196,90 @@ struct Solution {
 	let analyzedBatteryCount: Int
 	let staticBatteryCount: Int
 	let depthLimit: Int
+
+	init(
+		finalC: Double, entropy: Double, preSplitBits: [Int: Int], steps: [Step],
+		splitValues: [Double], diff: Double, overlap: OverlapProfile, actualBatteryCount: Int,
+		requiredPower: Double, analyzedBatteryCount: Int, staticBatteryCount: Int, depthLimit: Int
+	) {
+		self.finalC = finalC
+		self.entropy = entropy
+		self.preSplitBits = preSplitBits
+		self.steps = steps
+		self.splitValues = splitValues
+		self.diff = diff
+		self.overlap = overlap
+		self.actualBatteryCount = actualBatteryCount
+		self.requiredPower = requiredPower
+		self.analyzedBatteryCount = analyzedBatteryCount
+		self.staticBatteryCount = staticBatteryCount
+		self.depthLimit = depthLimit
+	}
+
+	lazy var allActions: String = {
+		// 1. Collect all actions including pre-split
+		var allSteps: [(type: Int, action: Action)] = []
+
+		// Pre-split bits are always discards
+		for (bit, count) in preSplitBits {
+			for _ in 0..<count {
+				allSteps.append((type: bit, action: .discard))
+			}
+		}
+
+		// Solution steps
+		for step in steps {
+			let bit = (step.type == .two) ? 2 : 3
+			allSteps.append((type: bit, action: step.action))
+		}
+
+		var groups: [[(type: Int, action: Action)]] = []
+		if !allSteps.isEmpty {
+			var currentGroup: [(type: Int, action: Action)] = [allSteps[0]]
+			for i in 1..<allSteps.count {
+				let step = allSteps[i]
+				let prev = allSteps[i - 1]
+				if step.action == prev.action {
+					currentGroup.append(step)
+				} else {
+					groups.append(currentGroup)
+					currentGroup = [step]
+				}
+			}
+			groups.append(currentGroup)
+		}
+
+		var resultParts: [String] = []
+
+		for group in groups {
+			let action = group[0].action
+			var stepsToProcess = group
+
+			// Sort only if it's a discard group
+			if action == .discard {
+				stepsToProcess.sort { $0.type > $1.type }  // 3 before 2
+			}
+
+			// Convert to strings with separators
+			var groupStrings: [String] = []
+			var lastType: Int? = nil
+
+			for step in stepsToProcess {
+				let typeStr = (step.type == 2) ? "2" : "3"
+				let actStr = (step.action == .add) ? "🟢" : "🔴"
+				let str = "\(typeStr)\(actStr)"
+
+				if let last = lastType, last != step.type {
+					groupStrings.append("⏩ ")  // Inner group separator
+				}
+				groupStrings.append(str)
+				lastType = step.type
+			}
+			resultParts.append(groupStrings.joined(separator: "  "))
+		}
+
+		return resultParts.joined(separator: "  ⏩  ")
+	}()
 }
 
 func isBetterSolution(_ new: Solution, than old: Solution?) -> Bool {
@@ -584,8 +668,7 @@ func getOverlapStats(
 func analyzeSolutionOverlap(
 	_ solution: Solution,
 	battery: Config.Battery,
-	batteryStatic: Config.Battery,
-	lastAnalyzedBatteryCount: inout Int
+	batteryStatic: Config.Battery
 ) {
 	let preSplit = solution.preSplitBits.reduce(1.0) {
 		$0 * pow(Double($1.key), Double($1.value))
@@ -600,59 +683,29 @@ func analyzeSolutionOverlap(
 		minOverflow: solution.diff
 	)
 
-	if solution.analyzedBatteryCount != lastAnalyzedBatteryCount {
-		let oneBatteryTotalEnergyGlob = battery.totalEnergy
-		let inputDoubleBatteryPowerGlob = battery.power * Double(solution.actualBatteryCount)
-		let baselineBatteriesPerDayGlob =
-			(inputDoubleBatteryPowerGlob * 86400.0) / oneBatteryTotalEnergyGlob
-		let requiredBatteriesPerDayGlob =
-			(solution.requiredPower * 86400.0) / oneBatteryTotalEnergyGlob
+	let oneBatteryTotalEnergyGlob = battery.totalEnergy
+	let inputDoubleBatteryPowerGlob = battery.power * Double(solution.actualBatteryCount)
+	let baselineBatteriesPerDayGlob =
+		(inputDoubleBatteryPowerGlob * 86400.0) / oneBatteryTotalEnergyGlob
+	let requiredBatteriesPerDayGlob =
+		(solution.requiredPower * 86400.0) / oneBatteryTotalEnergyGlob
+	let possibleSavePerDayGlob = baselineBatteriesPerDayGlob - requiredBatteriesPerDayGlob
 
-		print("\n==================================================")
-		print("⚓️ 最大递归深度: \(solution.depthLimit)")
-		print("⚡️ 所需功率:　\(String(format: "%.4f", solution.requiredPower))")
-		print(
-			"🔋 输入功率:　\(String(format: "%.4f", Double(solution.actualBatteryCount) * battery.power))"
-		)
-		print(
-			"📦 电池数量:　\(batteryStatic.name): \(solution.staticBatteryCount)个, \(battery.name): \(solution.actualBatteryCount)个"
-		)
-		print(
-			"📉 基准消耗:　\(String(format: "%.3f", baselineBatteriesPerDayGlob)) 颗/天 (\(solution.actualBatteryCount)发电机常开)"
-		)
-		print("🎯 理论最少:　\(String(format: "%.3f", requiredBatteriesPerDayGlob)) 颗/天 (100%利用率)")
-		print(
-			"💰 理论可省:　\(String(format: "%.3f", baselineBatteriesPerDayGlob - requiredBatteriesPerDayGlob)) 颗/天"
-		)
-		print("==================================================")
-	} else {
-		print("--------------------------------------------------")
-	}
+	print(
+		"\n\t📦 电池数量:　\(batteryStatic.name): \(solution.staticBatteryCount)个, \(battery.name): \(solution.actualBatteryCount)个"
+	)
+	print(
+		"\t📉 基准消耗:　\(String(format: "%.3f", baselineBatteriesPerDayGlob)) 颗/天 (\(solution.actualBatteryCount)发电机常开)"
+	)
+	print("\t🎯 理论最少:　\(String(format: "%.3f", requiredBatteriesPerDayGlob)) 颗/天 (100%利用率)")
+	print("\t------------------------------------------------")
 
-	let actions = solution.steps.map { step -> String in
-		let typeStr = (step.type == .two) ? "2" : "3"
-		let actStr = (step.action == .add) ? "🟢" : "🔴"
-		return "\(typeStr)\(actStr)"
-	}.joined(separator: "  ")
-
-	let separater = "⏭"
-	let preActions =
-		solution.preSplitBits.map { (bit, count) -> [String] in
-			let typeStr = (Int(bit) == 2) ? "2" : "3"
-			return Array(repeating: "\(typeStr)🔴", count: count)
-		}.flatMap(\.self).joined(separator: "  ")
-
-	// Calculate savePerDay again for display
 	let netBenefit = stats.profile.netBenefitPerSecond
 	let savedPerDay = (netBenefit > 0) ? (netBenefit * 86400.0) : 0.0
 
 	// print("\n==================================================")
 
-	let preActionCount = "\(solution.preSplitBits.map(\.value).reduce(0, +))"
-	print(
-		"\t👣 步骤数:　　\(preActionCount)\(String(repeating: "　", count: preActions.count - preActionCount.count))\(separater)   \(solution.steps.count)"
-	)
-	print("\t🛠 操作步骤:　\(preActions)  \(separater)   \(actions)")
+	print("\t🛠 操作步骤:　\(solution.allActions)")
 
 	print("\t🔄 周期:　　　\(String(format: "%.3f", stats.cycleTime))秒")
 	print("\t📉 最低电量:　\(String(format: "%.4f", stats.minLevel))")
@@ -683,12 +736,10 @@ func analyzeSolutionOverlap(
 	print(
 		"\t⏳ 理论每:　　\(formatDuration(secondsToSaveOneBattery)) 省一颗【\(battery.name)】 (基准 \(solution.actualBatteryCount)发电机满载)"
 	)
-	print("\t🗑 实际每:　　\(formatDuration(secondsToWasteOneBattery)) 浪费一颗【\(battery.name)】 (溢出)")
+	print("\t🗑 实际每:　　\(formatDuration(secondsToWasteOneBattery)) 溢出一颗【\(battery.name)】")
 	print(
-		"\t💎 净收益:　　\(String(format: "%.6f", netBenefit)) 颗【\(battery.name)】/秒, 每天: \(String(format: "%.3f", savedPerDay))颗【\(battery.name)】"
+		"\t💎 净收益:　　\(String(format: "%.6f", netBenefit)) 颗/秒  ≈  \(String(format: "%.3f", savedPerDay))颗/天(理论可省: \(String(format: "%.3f", possibleSavePerDayGlob)) 颗/天, 差值: \(String(format: "%.3f", possibleSavePerDayGlob - savedPerDay)))"
 	)
-
-	lastAnalyzedBatteryCount = solution.analyzedBatteryCount
 }
 
 struct OverlapStats {
@@ -918,23 +969,38 @@ for config in configs {
 		}
 	}
 
-	let tops = solutions.values.flatMap(\.self).compactMap(\.self).sorted(by: { (a, b) -> Bool in
+	var uniqueSolutions: [String: Solution] = [:]
+	for sol in solutions.values.flatMap(\.self).compactMap(\.self) {
+		let key = sol.allActions
+		if let existing = uniqueSolutions[key] {
+			if isBetterSolution(sol, than: existing) {
+				uniqueSolutions[key] = sol
+			}
+		} else {
+			uniqueSolutions[key] = sol
+		}
+	}
+
+	let tops = uniqueSolutions.values.sorted(by: { (a, b) -> Bool in
 		return isBetterSolution(a, than: b)
 	}).prefix(showTopSolutions)
 
-	if tops.isEmpty {
+	guard !tops.isEmpty else {
 		print("\n==================================================")
 		print("❌ 未找到任何符合条件的方案")
 		print("==================================================")
+		continue
 	}
 
-	var lastBatteryCount = -1
-	for sol in tops {
+	for (index, sol) in tops.enumerated() {
+		if index > 0 {
+			print("\n\t==================================================")
+			print("\n")
+		}
 		analyzeSolutionOverlap(
 			sol,
 			battery: battery,
-			batteryStatic: batteryStatic,
-			lastAnalyzedBatteryCount: &lastBatteryCount
+			batteryStatic: batteryStatic
 		)
 	}
 }
