@@ -39,7 +39,10 @@ let extraBeltInSteps: Int = 1
 let maxDepthLimit: Int = 9
 
 /// 最终输出的方案数量, 1会输出最优方案, 3会输出前三方案, 以此类推
-var showTopSolutions: Int = 1
+var showTopSolutions: Int = 3
+
+/// 允许最小差值, 这个值越小越接近理论最优, 但是会下线后因为鹰角的服务器优化而导致计算不正确
+var allowedMinDiff: Double = 10
 
 /// 是否允许使用三分流（增加搜索空间和时间, 但可能找到更优解）
 let enableThree: Bool = true
@@ -270,7 +273,7 @@ class Solution {
 				let str = "\(typeStr)\(actStr)"
 
 				if let last = lastType, last != step.type {
-					groupStrings.append("⏩ ")  // Inner group separator
+					groupStrings.append("»»» ")  // Inner group separator
 				}
 				groupStrings.append(str)
 				lastType = step.type
@@ -278,7 +281,7 @@ class Solution {
 			resultParts.append(groupStrings.joined(separator: "  "))
 		}
 
-		return resultParts.joined(separator: "  ⏩  ")
+		return resultParts.joined(separator: "  »»»  ")
 	}()
 }
 
@@ -860,7 +863,7 @@ for config in configs {
 				}
 
 				// Record solution. 'diff' sets minOverflow to penalize high-waste solutions.
-				if diff >= 0, steps.last?.action == .add {
+				if diff >= allowedMinDiff, steps.last?.action == .add {
 					let profile = getOverlapStats(
 						steps: steps,
 						battery: battery,
