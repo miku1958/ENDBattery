@@ -41,8 +41,8 @@ let maxDepthLimit: Int = 9
 /// 最终输出的方案数量, 1会输出最优方案, 3会输出前三方案, 以此类推
 var showTopSolutions: Int = 3
 
-/// 允许最小差值, 这个值越小越接近理论最优, 但是会下线后因为鹰角的服务器优化而导致计算不正确
-var allowedMinDiff: Double = 10
+/// 允许最小差值, 这个值越小越接近理论最优, 但是会下线后因为鹰角的服务器优化而导致计算不正确, 如果出现这种情况可以适当调大这个值到10以上
+var allowedMinDiff: Double = 1
 
 /// 是否允许使用三分流（增加搜索空间和时间, 但可能找到更优解）
 let enableThree: Bool = true
