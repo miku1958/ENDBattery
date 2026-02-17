@@ -159,11 +159,6 @@ struct OverlapProfile: Comparable {
 			return lhs.outageDurationPer1000Sec < rhs.outageDurationPer1000Sec
 		}
 
-		// Prioritize sustainability (full recharge implies no long-term drain).
-		if lhs.hitFullCharge != rhs.hitFullCharge {
-			return lhs.hitFullCharge
-		}
-
 		// Safety check: Avoid low battery levels.
 		let lhsLow = lhs.minBatteryLevel < coreMaxCapacity * safetyThreshold
 		let rhsLow = rhs.minBatteryLevel < coreMaxCapacity * safetyThreshold
@@ -713,7 +708,6 @@ func analyzeSolutionOverlap(
 	print("\t🔄 周期:　　　\(String(format: "%.3f", stats.cycleTime))秒")
 	print("\t📉 最低电量:　\(String(format: "%.4f", stats.minLevel))")
 	print("\t📊 结束电量:　\(String(format: "%.4f", stats.endLevel))")
-	print("\t✅ 满电复位:　\(stats.profile.hitFullCharge ? "是" : "否")")
 	if stats.minLevel < 0.001 {
 		let outageStr = String(format: "%.3f", stats.profile.outageDurationPer1000Sec)
 		print("\t⚠️ 警告:　　该方案可能会导致短暂停电 (最低电量归零), 平均停电: \(outageStr)秒/1000秒 ⚠️")
@@ -873,6 +867,11 @@ for config in configs {
 						preSplit: preSplit,
 						minOverflow: diff
 					).profile
+
+					// Must satisfy full charge reset (hard requirement)
+					guard profile.hitFullCharge else {
+						return
+					}
 
 					let sol = Solution(
 						finalC: testBattery,
