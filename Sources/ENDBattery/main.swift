@@ -39,7 +39,7 @@ let extraBeltInSteps: Int = 1
 let maxDepthLimit: Int = 9
 
 /// 最终输出的方案数量, 1会输出最优方案, 3会输出前三方案, 以此类推
-var showTopSolutions: Int = 3
+var showTopSolutions: Int = 1
 
 /// 允许最小差值, 这个值越小越接近理论最优, 但是会下线后因为鹰角的服务器优化而导致计算不正确, 如果出现这种情况可以适当调大这个值到10以上
 var allowedMinDiff: Double = 1
@@ -49,6 +49,15 @@ let enableThree: Bool = true
 
 /// 安全阈值: 如果电量曾经低于这个值, 方案会被严重降级. 这个值越高越安全, 但可能错过一些边缘方案. 建议设置在15%左右 (15000), 也可以根据需求调整.
 let safetyThreshold = 0.15
+
+/// 方案停止工作后（没有分流电池流入）到停电的最大允许时间（秒）
+/// - nil: 自动使用 getOverlapStats 计算出的“全分流发电机同时停机最长连续时长”作为校验间隔
+/// - 例如 1800: 要求方案在停流后至少可坚持 30 分钟不断电
+let maxStopToOutageSeconds: Double? = nil
+
+/// 模拟时长（小时）
+/// 对于短周期方案，强制模拟至少这么长时间，以确保覆盖足够多的情况
+let minSimulationDurationHours: Double = 48
 
 /* ————————————————————————————— 下面不用看 ————————————————————————————— */
 
@@ -63,6 +72,9 @@ defer {
 
 /// Core capacity.
 let coreMaxCapacity: Double = 100000
+
+/// Belt speed: seconds per tile.
+let beltSecondsPerTile: Int = 2
 
 struct Config {
 	let name: String
@@ -194,11 +206,14 @@ class Solution {
 	let analyzedBatteryCount: Int
 	let staticBatteryCount: Int
 	let depthLimit: Int
+	let stopToOutageSeconds: Double
+	let requiredStopIntervalSeconds: Double
 
 	init(
 		finalC: Double, entropy: Double, preSplitBits: [Int: Int], steps: [Step],
 		splitValues: [Double], diff: Double, overlap: OverlapProfile, actualBatteryCount: Int,
-		requiredPower: Double, analyzedBatteryCount: Int, staticBatteryCount: Int, depthLimit: Int
+		requiredPower: Double, analyzedBatteryCount: Int, staticBatteryCount: Int, depthLimit: Int,
+		stopToOutageSeconds: Double, requiredStopIntervalSeconds: Double
 	) {
 		self.finalC = finalC
 		self.entropy = entropy
@@ -212,6 +227,8 @@ class Solution {
 		self.analyzedBatteryCount = analyzedBatteryCount
 		self.staticBatteryCount = staticBatteryCount
 		self.depthLimit = depthLimit
+		self.stopToOutageSeconds = stopToOutageSeconds
+		self.requiredStopIntervalSeconds = requiredStopIntervalSeconds
 	}
 
 	lazy var allActions: String = {
@@ -333,7 +350,7 @@ func getOverlapStats(
 	// - Core charges on excess (waste after full).
 	// - Transport delay: 1 tile / 2s.
 
-	let rootPeriod: Int = Int(2 * preSplit)
+	let rootPeriod: Int = Int((Double(beltSecondsPerTile) * preSplit).rounded())
 	struct Stream {
 		let period: Int
 		let offset: Int
@@ -392,7 +409,7 @@ func getOverlapStats(
 		var t = startPhase
 		// Generate one cycle of events
 		while t < cycle {
-			let rawTime = Double(t) * 2.0
+			let rawTime = Double(t)
 			let time = rawTime.truncatingRemainder(dividingBy: singleCycleDuration)
 			arrivalTimes.append(time)
 			t += s.period
@@ -416,6 +433,7 @@ func getOverlapStats(
 			overflow: 0.0,
 			minLevel: coreMaxCapacity,
 			endLevel: coreMaxCapacity,
+			maxAllStoppedDuration: singleCycleDuration,
 			profile: OverlapProfile(
 				overflowPerSecond: minOverflow,
 				minBatteryLevel: coreMaxCapacity,
@@ -435,11 +453,13 @@ func getOverlapStats(
 
 	let computedCycles = Int(ceil(adjustedTargetDuration / singleCycleDuration))
 
-	// Enforce min simulation coverage (12h for short cycles, 1 cycle for long)
+	// Enforce min simulation coverage
+	// Ensure total simulation time >= minSimulationDurationHours
 	var simCycleCount = max(1, computedCycles)
-	if singleCycleDuration < 3600.0 {
-		let shortCycleTarget = Int(ceil(43200.0 / singleCycleDuration))
-		simCycleCount = max(simCycleCount, shortCycleTarget)
+	let minDurationSeconds = minSimulationDurationHours * 3600.0
+	if singleCycleDuration * Double(simCycleCount) < minDurationSeconds {
+		let minCycleTarget = Int(ceil(minDurationSeconds / singleCycleDuration))
+		simCycleCount = max(simCycleCount, minCycleTarget)
 	}
 
 	// Measure after warmup cycle unless cycle is very long (covering 20h+ without warmup is fine).
@@ -517,6 +537,8 @@ func getOverlapStats(
 	var totalOutageTime = 0.0
 	var minLevel = coreMaxCapacity
 	var hitFullCharge = false
+	var maxAllStoppedDuration = 0.0
+	var currentAllStoppedStreak = 0.0
 
 	var minLevelInitialized = (measureStart <= 0.0001)
 
@@ -549,6 +571,13 @@ func getOverlapStats(
 
 			// Calculate stats strictly within overlap window, accounting for clamping
 			if overlapDt > 0.000001 {
+				if active == 0 {
+					currentAllStoppedStreak += overlapDt
+					maxAllStoppedDuration = max(maxAllStoppedDuration, currentAllStoppedStreak)
+				} else {
+					currentAllStoppedStreak = 0.0
+				}
+
 				// Project level at overlapStart
 				let dtPre = max(0, overlapStart - lastT)
 				var levelAtWindowEntry = levelBefore
@@ -604,6 +633,13 @@ func getOverlapStats(
 	if lastT < measureEnd {
 		let dt = measureEnd - lastT
 		if dt > 0.00001 {
+			if active == 0 {
+				currentAllStoppedStreak += dt
+				maxAllStoppedDuration = max(maxAllStoppedDuration, currentAllStoppedStreak)
+			} else {
+				currentAllStoppedStreak = 0.0
+			}
+
 			if !minLevelInitialized {
 				minLevel = currentLevel
 				minLevelInitialized = true
@@ -658,6 +694,7 @@ func getOverlapStats(
 		overflow: totalOverflow,
 		minLevel: minLevel,
 		endLevel: currentLevel,
+		maxAllStoppedDuration: maxAllStoppedDuration,
 		profile: profile
 	)
 }
@@ -708,6 +745,8 @@ func analyzeSolutionOverlap(
 	print("\t🔄 周期:　　　\(String(format: "%.3f", stats.cycleTime))秒")
 	print("\t📉 最低电量:　\(String(format: "%.4f", stats.minLevel))")
 	print("\t📊 结束电量:　\(String(format: "%.4f", stats.endLevel))")
+	print("\t⏱ 停流间隔:　\(formatDuration(solution.requiredStopIntervalSeconds))")
+	print("\t⛔ 停流停电:　\(formatDuration(solution.stopToOutageSeconds)) (按满电估算)")
 	if stats.minLevel < 0.001 {
 		let outageStr = String(format: "%.3f", stats.profile.outageDurationPer1000Sec)
 		print("\t⚠️ 警告:　　该方案可能会导致短暂停电 (最低电量归零), 平均停电: \(outageStr)秒/1000秒 ⚠️")
@@ -744,6 +783,7 @@ struct OverlapStats {
 	let overflow: Double
 	let minLevel: Double
 	let endLevel: Double
+	let maxAllStoppedDuration: Double
 	let profile: OverlapProfile
 }
 
@@ -858,7 +898,7 @@ for config in configs {
 
 				// Record solution. 'diff' sets minOverflow to penalize high-waste solutions.
 				if diff >= allowedMinDiff, steps.last?.action == .add {
-					let profile = getOverlapStats(
+					let overlapStats = getOverlapStats(
 						steps: steps,
 						battery: battery,
 						actualBatteryCount: actualBatteryCount,
@@ -866,10 +906,23 @@ for config in configs {
 						analyzedBatteryCount: analyzedBatteryCount,
 						preSplit: preSplit,
 						minOverflow: diff
-					).profile
+					)
+					let profile = overlapStats.profile
 
 					// Must satisfy full charge reset (hard requirement)
 					guard profile.hitFullCharge else {
+						return
+					}
+
+					let stopToOutageSeconds: Double =
+						(requiredPower > 0.000001)
+						? (coreMaxCapacity / requiredPower)
+						: Double.infinity
+
+					let requiredStopInterval = maxStopToOutageSeconds ?? overlapStats.maxAllStoppedDuration
+
+					// Must survive the specified stop interval (or automatically calculated max stop duration)
+					if stopToOutageSeconds + 0.000001 < requiredStopInterval {
 						return
 					}
 
@@ -885,7 +938,9 @@ for config in configs {
 						requiredPower: requiredPower,
 						analyzedBatteryCount: analyzedBatteryCount,
 						staticBatteryCount: staticBatteryCount,
-						depthLimit: depthLimit
+						depthLimit: depthLimit,
+						stopToOutageSeconds: stopToOutageSeconds,
+						requiredStopIntervalSeconds: requiredStopInterval
 					)
 					let index = steps.count
 					if let existing = solutions[preSplitBits]![index] {
