@@ -30,6 +30,9 @@ let configs: [Config] = [
 
 /* ————————————————————————————— 选填的数据 ————————————————————————————— */
 
+/// 最少分流电池数: 只分流一个必然会在离线时, 由于服务器低精度运行导致报表里出现效率下降
+let minAnalyzedBatteryCount = 3
+
 /// 递归时额外的传送带/分流器数量（格）, 一般不用改
 /// 用于限制递归上限
 /// 最小值为 1
@@ -41,8 +44,8 @@ let maxDepthLimit: Int = 9
 /// 最终输出的方案数量, 1会输出最优方案, 3会输出前三方案, 以此类推
 var showTopSolutions: Int = 1
 
-/// 允许最小差值, 这个值越小越接近理论最优, 但是会下线后因为鹰角的服务器优化而导致计算不正确, 如果出现这种情况可以适当调大这个值到20以上
-var allowedMinDiff: Double = 15
+/// 允许最小差值, 这个值越小越接近理论最优, 但是会下线后因为鹰角的服务器优化而导致计算不正确, 如果出现这种情况可以适当调大这个值到10以上
+var allowedMinDiff: Double = 1
 
 /// 是否允许使用三分流（增加搜索空间和时间, 但可能找到更优解）
 let enableThree: Bool = true
@@ -51,7 +54,7 @@ let enableThree: Bool = true
 let safetyThreshold = 0.15
 
 /// 方案停止工作后（没有分流电池流入）到停电的最大允许时间（秒）
-/// - nil: 自动使用 getOverlapStats 计算出的“全分流发电机同时停机最长连续时长”作为校验间隔
+/// - nil: 自动使用 getOverlap Stats 计算出的“全分流发电机同时停机最长连续时长”作为校验间隔
 /// - 例如 1800: 要求方案在停流后至少可坚持 30 分钟不断电
 let maxStopToOutageSeconds: Double? = nil
 
@@ -800,9 +803,11 @@ for config in configs {
 	// Number of batteries to split
 	var analyzedBatteryCount: Int = Int(ceil(totalPower / battery.power))
 
+	let stopAtCount = max(1, min(minAnalyzedBatteryCount, analyzedBatteryCount))
+
 	var solutions: [[Int: Int]: [Solution?]] = [:]
 
-	while analyzedBatteryCount > 0 {
+	while analyzedBatteryCount >= stopAtCount {
 		defer {
 			analyzedBatteryCount -= 1
 		}
