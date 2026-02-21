@@ -1,5 +1,7 @@
 // swift-min-version: 5.2
 
+import Foundation
+
 /* ————————————————————————————— 需要认真填的数据 ————————————————————————————— */
 
 let configs: [Config] = [
@@ -24,14 +26,14 @@ let configs: [Config] = [
 		analyzedBattery: .lowEarth,
 
 		/// 你屏幕上显示的总功率需求
-		baseRequiredPower: 1890
+		baseRequiredPower: 1835
 	),
 ]
 
 /* ————————————————————————————— 选填的数据 ————————————————————————————— */
 
 /// 最少分流电池数: 只分流一个必然会在离线时, 由于服务器低精度运行导致报表里出现效率下降
-let minAnalyzedBatteryCount = 3
+let minAnalyzedBatteryCount = 1
 
 /// 递归时额外的传送带/分流器数量（格）, 一般不用改
 /// 用于限制递归上限
@@ -60,11 +62,14 @@ let maxStopToOutageSeconds: Double? = nil
 
 /// 模拟时长（小时）
 /// 对于短周期方案，强制模拟至少这么长时间，以确保覆盖足够多的情况
-let minSimulationDurationHours: Double = 48
+let minSimulationDurationInHour: Double = 48
+
+/// 允许的最大缺电时间（秒）
+/// 缺电定义：当前发电机总功率 < 需求功率，导致开始消耗核心电量。
+/// 缺电结束：发电机总功率 >= 需求功率，且此次充电过程能将核心电量充满。
+let maxShortageDurationLimitInSecond: Double = 1000
 
 /* ————————————————————————————— 下面不用看 ————————————————————————————— */
-
-import Foundation
 
 let startTime = Date()
 
@@ -165,16 +170,28 @@ struct OverlapProfile: Comparable {
 	/// Net batteries saved per second
 	let netBenefitPerSecond: Double
 
-	/// Avg outage duration per 1000s
-	let outageDurationPer1000Sec: Double
+	/// Max consecutive shortage duration
+	let maxShortageDuration: Double
 
 	static func < (lhs: OverlapProfile, rhs: OverlapProfile) -> Bool {
-		if abs(lhs.outageDurationPer1000Sec - rhs.outageDurationPer1000Sec) > 1e-4 {
-			// Min outage
-			return lhs.outageDurationPer1000Sec < rhs.outageDurationPer1000Sec
+		// First check if either exceeds the limit
+		let lhsExceeds = lhs.maxShortageDuration > maxShortageDurationLimitInSecond
+		let rhsExceeds = rhs.maxShortageDuration > maxShortageDurationLimitInSecond
+
+		if lhsExceeds && !rhsExceeds {
+			return false  // lhs is invalid, so rhs is (likely) better
+		}
+		if !lhsExceeds && rhsExceeds {
+			return true  // lhs is valid, so better
+		}
+		if lhsExceeds && rhsExceeds {
+			// Both invalid, prefer smaller violation
+			return lhs.maxShortageDuration < rhs.maxShortageDuration
 		}
 
-		// Safety check: Avoid low battery levels.
+		// Both are valid (<= limit). Proceed with standard optimization goals.
+
+		// Safety check: Avoid critically low battery levels.
 		let lhsLow = lhs.minBatteryLevel < coreMaxCapacity * safetyThreshold
 		let rhsLow = rhs.minBatteryLevel < coreMaxCapacity * safetyThreshold
 		if lhsLow || rhsLow {
@@ -183,14 +200,21 @@ struct OverlapProfile: Comparable {
 			}
 		}
 
+		// Priority: Max Net Benefit (Saving batteries)
 		if abs(lhs.netBenefitPerSecond - rhs.netBenefitPerSecond) > 1e-4 {
-			// Max benefit
 			return lhs.netBenefitPerSecond > rhs.netBenefitPerSecond
 		}
 
+		// Priority: Lower Shortage Duration (as tie-breaker for same benefit)
+		if abs(lhs.maxShortageDuration - rhs.maxShortageDuration) > 1e-4 {
+			return lhs.maxShortageDuration < rhs.maxShortageDuration
+		}
+
+		// Priority: Smaller Overflow
 		if abs(lhs.overflowPerSecond - rhs.overflowPerSecond) > 1e-4 {
 			return lhs.overflowPerSecond < rhs.overflowPerSecond
 		}
+
 		return lhs.minBatteryLevel > rhs.minBatteryLevel
 	}
 }
@@ -328,13 +352,13 @@ func formatDuration(_ seconds: Double) -> String {
 	}
 
 	if seconds >= 86400 {
-		return String(format: "%.3f 天", seconds / 86400.0)
+		return String(format: "%.3f 天", seconds / 86400)
 	}
 	if seconds >= 3600 {
-		return String(format: "%.3f 小时", seconds / 3600.0)
+		return String(format: "%.3f 小时", seconds / 3600)
 	}
 	if seconds >= 60 {
-		return String(format: "%.3f 分钟", seconds / 60.0)
+		return String(format: "%.3f 分钟", seconds / 60)
 	}
 	return String(format: "%.3f 秒", seconds)
 }
@@ -426,14 +450,14 @@ func getOverlapStats(
 	let oneBatteryTotalEnergy = battery.totalEnergy
 	let excessPowerWithoutSplit = battery.power * Double(actualBatteryCount) - requiredPower
 
-	let saveRateInBatteriesPerSec =
-		(excessPowerWithoutSplit > 0.001)
-		? (excessPowerWithoutSplit / oneBatteryTotalEnergy) : 0.0
+	let saveRateInBatteriesPerSec: Double =
+		(excessPowerWithoutSplit > 0)
+		? (excessPowerWithoutSplit / oneBatteryTotalEnergy) : 0
 
 	if baseArrivals.isEmpty {
 		return OverlapStats(
 			cycleTime: singleCycleDuration,
-			overflow: 0.0,
+			overflow: 0,
 			minLevel: coreMaxCapacity,
 			endLevel: coreMaxCapacity,
 			maxAllStoppedDuration: singleCycleDuration,
@@ -444,31 +468,31 @@ func getOverlapStats(
 				hitFullCharge: true,
 				netBenefitPerSecond: saveRateInBatteriesPerSec
 					- (minOverflow / oneBatteryTotalEnergy),
-				outageDurationPer1000Sec: 0.0
+				maxShortageDuration: 0
 			)
 		)
 	}
 
 	// Adjust simulation duration for constant complexity
 	// Base 24h
-	let baseTargetDuration = 86400.0
+	let baseTargetDuration: Double = 86400
 	let adjustedTargetDuration = baseTargetDuration / Double(max(1, analyzedBatteryCount))
 
 	let computedCycles = Int(ceil(adjustedTargetDuration / singleCycleDuration))
 
 	// Enforce min simulation coverage
-	// Ensure total simulation time >= minSimulationDurationHours
+	// Ensure total simulation time >= minSimulationDurationInHour
 	var simCycleCount = max(1, computedCycles)
-	let minDurationSeconds = minSimulationDurationHours * 3600.0
+	let minDurationSeconds = minSimulationDurationInHour * 3600
 	if singleCycleDuration * Double(simCycleCount) < minDurationSeconds {
 		let minCycleTarget = Int(ceil(minDurationSeconds / singleCycleDuration))
 		simCycleCount = max(simCycleCount, minCycleTarget)
 	}
 
 	// Measure after warmup cycle unless cycle is very long (covering 20h+ without warmup is fine).
-	let measureStart = (simCycleCount > 1) ? singleCycleDuration : 0.0
-	let measureEnd = Double(simCycleCount) * singleCycleDuration
-	let recoveryCheckStart = measureEnd - singleCycleDuration
+	let measureStart: Double = (simCycleCount > 1) ? singleCycleDuration : 0
+	let measureEnd: Double = Double(simCycleCount) * singleCycleDuration
+	let recoveryCheckStart: Double = measureEnd - singleCycleDuration
 
 	var allArrivals: [Double] = []
 	for i in 0..<simCycleCount {
@@ -492,7 +516,7 @@ func getOverlapStats(
 
 	func getIntervals(arrivals: [Double]) -> [Interval] {
 		var intervals: [Interval] = []
-		var nextAvailable: Double = 0.0
+		var nextAvailable: Double = 0
 		// Queue logic: Battery waits if generator is busy
 		for t in arrivals {
 			let start = max(t, nextAvailable)
@@ -530,18 +554,28 @@ func getOverlapStats(
 	// Measurement Window: [cycleTime, simCycleCount*cycleTime]
 	let measurementDuration = measureEnd - measureStart
 
-	var active = 0
-	var lastT = 0.0
+	var active: Int = 0
+	var lastT: Double = 0
 	// Start full
 	var currentLevel = coreMaxCapacity
 
 	// Measurement window stats
-	var totalOverflow = 0.0
-	var totalOutageTime = 0.0
+	var totalOverflow: Double = 0
 	var minLevel = coreMaxCapacity
 	var hitFullCharge = false
-	var maxAllStoppedDuration = 0.0
-	var currentAllStoppedStreak = 0.0
+	var maxAllStoppedDuration: Double = 0
+	var currentAllStoppedStreak: Double = 0
+	var maxShortageDuration: Double = 0
+
+	// Shortage tracking
+	// shortageStartTime: The time when the current shortage sequence began.
+	// If nil, we are not in a shortage (or we are fully charged/safe).
+	var shortageStartTime: Double? = nil
+
+	// potentialEndCandidate: When charging starts, we MIGHT be ending the shortage.
+	// We store the time when charging started. If it hits full, the shortage ended at this time.
+	// If it drops again without hitting full, this candidate is invalid and shortage continues.
+	var potentialEndCandidate: Double? = nil
 
 	var minLevelInitialized = (measureStart <= 0.0001)
 
@@ -563,7 +597,6 @@ func getOverlapStats(
 
 			let levelBefore = currentLevel
 			let possibleLevel = currentLevel + netPower * dt
-
 			var nextLevel = possibleLevel
 
 			if possibleLevel > coreMaxCapacity {
@@ -572,13 +605,58 @@ func getOverlapStats(
 				nextLevel = 0
 			}
 
+			// Logic for Shortage Duration:
+			// - Start: netPower < 0 (draining) while at full capacity or not currently tracking a shortage.
+			// - End: netPower >= 0 (charging) leads to a full charge state.
+			//   The shortage ends at the beginning of the charging phase that successfully reaches full capacity.
+
+			let isDraining = (netPower < -0.00001)
+
+			if isDraining {
+				// Start tracking shortage if not already doing so
+				if shortageStartTime == nil {
+					if levelBefore < coreMaxCapacity {
+						// Case: Sub-full state transition to draining
+						shortageStartTime = lastT
+					} else if levelBefore >= coreMaxCapacity {
+						// Case: Full state transition to draining
+						shortageStartTime = lastT
+					}
+				}
+
+				// Invalidate potential end candidate if draining resumes before full charge
+				potentialEndCandidate = nil
+
+			} else {
+				// Charging or Idle phase
+				if shortageStartTime != nil {
+					// Potential end of shortage sequence
+					if potentialEndCandidate == nil {
+						potentialEndCandidate = lastT
+					}
+
+					// Confirm end of shortage if full capacity is reached
+					if nextLevel >= coreMaxCapacity {
+						if let endT = potentialEndCandidate {
+							let duration = endT - shortageStartTime!
+							if endT >= measureStart {  // Only record relevant events
+								maxShortageDuration = max(maxShortageDuration, duration)
+							}
+						}
+						// Reset state
+						shortageStartTime = nil
+						potentialEndCandidate = nil
+					}
+				}
+			}
+
 			// Calculate stats strictly within overlap window, accounting for clamping
 			if overlapDt > 0.000001 {
 				if active == 0 {
 					currentAllStoppedStreak += overlapDt
 					maxAllStoppedDuration = max(maxAllStoppedDuration, currentAllStoppedStreak)
 				} else {
-					currentAllStoppedStreak = 0.0
+					currentAllStoppedStreak = 0
 				}
 
 				// Project level at overlapStart
@@ -597,10 +675,7 @@ func getOverlapStats(
 				}
 
 				if pEnd <= 0 {
-					let timeToZeroLocal =
-						(netPower < -0.00001) ? (levelAtWindowEntry / abs(netPower)) : 0.0
-					let outageLocal = max(0, overlapDt - timeToZeroLocal)
-					totalOutageTime += outageLocal
+					// Just tracking outage time here if needed, but we use maxShortageDuration now.
 				}
 
 				// Track minLevel within window
@@ -615,7 +690,7 @@ func getOverlapStats(
 
 				// Track full charge recovery (sustainability check)
 				if overlapEnd >= recoveryCheckStart {
-					if levelAtWindowExit >= (coreMaxCapacity - 0.001) {
+					if levelAtWindowExit >= coreMaxCapacity {
 						hitFullCharge = true
 					}
 				}
@@ -640,7 +715,7 @@ func getOverlapStats(
 				currentAllStoppedStreak += dt
 				maxAllStoppedDuration = max(maxAllStoppedDuration, currentAllStoppedStreak)
 			} else {
-				currentAllStoppedStreak = 0.0
+				currentAllStoppedStreak = 0
 			}
 
 			if !minLevelInitialized {
@@ -657,9 +732,6 @@ func getOverlapStats(
 				totalOverflow += (possibleLevel - coreMaxCapacity)
 				currentLevel = coreMaxCapacity
 			} else if possibleLevel <= 0 {
-				let timeToZero = (netPower < -0.00001) ? (currentLevel / abs(netPower)) : 0.0
-				let outage = max(0, dt - timeToZero)
-				totalOutageTime += outage
 				currentLevel = 0
 			} else {
 				currentLevel = possibleLevel
@@ -676,12 +748,9 @@ func getOverlapStats(
 	let measuredOverflowPerSec = totalOverflow / measurementDuration
 	let overflowPerSec = max(measuredOverflowPerSec, minOverflow)
 
-	let wasteRateInBatteriesPerSec =
-		(overflowPerSec > 0.000001) ? (overflowPerSec / oneBatteryTotalEnergy) : 0.0
+	let wasteRateInBatteriesPerSec: Double =
+		(overflowPerSec > 0) ? (overflowPerSec / oneBatteryTotalEnergy) : 0
 	let netBenefitPerSec = saveRateInBatteriesPerSec - wasteRateInBatteriesPerSec
-
-	let outageDurationPer1000Sec =
-		(measurementDuration > 0.001) ? ((totalOutageTime / measurementDuration) * 1000.0) : 0.0
 
 	let profile = OverlapProfile(
 		overflowPerSecond: overflowPerSec,
@@ -689,7 +758,7 @@ func getOverlapStats(
 		endBatteryLevel: currentLevel,
 		hitFullCharge: hitFullCharge,
 		netBenefitPerSecond: netBenefitPerSec,
-		outageDurationPer1000Sec: outageDurationPer1000Sec
+		maxShortageDuration: maxShortageDuration
 	)
 
 	return OverlapStats(
@@ -724,9 +793,9 @@ func analyzeSolutionOverlap(
 	let oneBatteryTotalEnergyGlob = battery.totalEnergy
 	let inputDoubleBatteryPowerGlob = battery.power * Double(solution.actualBatteryCount)
 	let baselineBatteriesPerDayGlob =
-		(inputDoubleBatteryPowerGlob * 86400.0) / oneBatteryTotalEnergyGlob
+		(inputDoubleBatteryPowerGlob * 86400) / oneBatteryTotalEnergyGlob
 	let requiredBatteriesPerDayGlob =
-		(solution.requiredPower * 86400.0) / oneBatteryTotalEnergyGlob
+		(solution.requiredPower * 86400) / oneBatteryTotalEnergyGlob
 	let possibleSavePerDayGlob = baselineBatteriesPerDayGlob - requiredBatteriesPerDayGlob
 
 	print(
@@ -739,7 +808,7 @@ func analyzeSolutionOverlap(
 	print("\t------------------------------------------------")
 
 	let netBenefit = stats.profile.netBenefitPerSecond
-	let savedPerDay = (netBenefit > 0) ? (netBenefit * 86400.0) : 0.0
+	let savedPerDay: Double = (netBenefit > 0) ? (netBenefit * 86400) : 0
 
 	// print("\n==================================================")
 
@@ -748,11 +817,25 @@ func analyzeSolutionOverlap(
 	print("\t🔄 周期:　　　\(String(format: "%.3f", stats.cycleTime))秒")
 	print("\t📉 最低电量:　\(String(format: "%.4f", stats.minLevel))")
 	print("\t📊 结束电量:　\(String(format: "%.4f", stats.endLevel))")
-	print("\t⏱ 停流间隔:　\(formatDuration(solution.requiredStopIntervalSeconds))")
-	print("\t⛔ 停流停电:　\(formatDuration(solution.stopToOutageSeconds)) (按满电估算)")
-	if stats.minLevel < 0.001 {
-		let outageStr = String(format: "%.3f", stats.profile.outageDurationPer1000Sec)
-		print("\t⚠️ 警告:　　该方案可能会导致短暂停电 (最低电量归零), 平均停电: \(outageStr)秒/1000秒 ⚠️")
+	// print("\t⏱ 停流间隔:　\(formatDuration(solution.requiredStopIntervalSeconds))")
+	print("\t🔋 核心续航:　\(formatDuration(solution.stopToOutageSeconds)) (分流中断后还能坚持多久)")
+
+	do {
+		let durationStr = formatDuration(stats.maxAllStoppedDuration)
+		let warning =
+			stats.maxAllStoppedDuration > solution.stopToOutageSeconds ? "❌" : "⚠️"
+		print(
+			"\t\(warning) 最长完全亏电:　\(durationStr) (所有发电机同时停止)"
+		)
+	}
+
+	do {
+		let outageStr = formatDuration(stats.profile.maxShortageDuration)
+		let warning =
+			stats.profile.maxShortageDuration > maxShortageDurationLimitInSecond ? "❌" : "✅"
+		print(
+			"\t\(warning) 最长连续缺电:　\(outageStr) (限制: \(maxShortageDurationLimitInSecond)秒) (部分发电机同时停止)"
+		)
 	}
 	print("\t🔌 最终功率:　\(String(format: "%.4f", solution.finalC))")
 	print("\t⚖️ 差值:　　　\(String(format: "%.4f", solution.diff))")
@@ -763,14 +846,12 @@ func analyzeSolutionOverlap(
 	// 1. Calc waste rate (accounting for inevitable overflow if power > required)
 	let effectiveOverflow = max(stats.profile.overflowPerSecond, solution.diff)
 	let secondsToWasteOneBattery: Double =
-		(effectiveOverflow > 0.001)
+		(effectiveOverflow > 0)
 		? (oneBatteryTotalEnergy / effectiveOverflow) : Double.infinity
 
 	// 2. Calc save time
 	let excessPowerWithoutSplit = inputBatteryPower - solution.requiredPower
-	let secondsToSaveOneBattery =
-		(excessPowerWithoutSplit > 0.001)
-		? (oneBatteryTotalEnergy / excessPowerWithoutSplit) : Double.infinity
+	let secondsToSaveOneBattery = oneBatteryTotalEnergy / excessPowerWithoutSplit
 
 	print(
 		"\t⏳ 理论每:　　\(formatDuration(secondsToSaveOneBattery)) 省一颗【\(battery.name)】 (基准 \(solution.actualBatteryCount)发电机满载)"
@@ -797,272 +878,290 @@ for config in configs {
 	let batteryStatic = config.staticBattery
 	let battery = config.analyzedBattery
 
-	// Total required power (minus 200W core base)
-	let totalPower = config.baseRequiredPower - 200
+	var currentBaseRequiredPower = config.baseRequiredPower
+	// Loop to automatically increase power if no solution satisfies constraints
+	while true {
+		// Total required power (minus 200W core base)
+		let totalPower = currentBaseRequiredPower - 200
 
-	// Number of batteries to split
-	var analyzedBatteryCount: Int = Int(ceil(totalPower / battery.power))
+		// Number of batteries to split
+		var analyzedBatteryCount: Int = Int(ceil(totalPower / battery.power))
 
-	let stopAtCount = max(1, min(minAnalyzedBatteryCount, analyzedBatteryCount))
+		let stopAtCount = max(1, min(minAnalyzedBatteryCount, analyzedBatteryCount))
 
-	var solutions: [[Int: Int]: [Solution?]] = [:]
+		var solutions: [[Int: Int]: [Solution?]] = [:]
 
-	while analyzedBatteryCount >= stopAtCount {
-		defer {
-			analyzedBatteryCount -= 1
-		}
-		let maxAnalyzedBatteryDesignPower = battery.power * Double(analyzedBatteryCount)
-		let maxAnalyzedBatteryPower = min(totalPower, maxAnalyzedBatteryDesignPower)
-		let staticBatteryCount = Int(
-			ceil((totalPower - maxAnalyzedBatteryPower) / batteryStatic.power))
-		let requiredPower: Double = totalPower - Double(staticBatteryCount) * batteryStatic.power
-
-		let actualBatteryCount = Int(ceil(requiredPower / battery.power))
-
-		// --- Derived vars ---
-
-		var allPreSplitBits: Set<[Int: Int]> = []
-		func findBits(previousPower: Double, splitFactor: Double, bits: [Int: Int]) {
-			let preSplit = bits.reduce(1.0) {
-				$0 * pow(Double($1.key), Double($1.value))
+		while analyzedBatteryCount >= stopAtCount {
+			defer {
+				analyzedBatteryCount -= 1
 			}
-			guard preSplit <= Double(maxDepthLimit) else {
-				return
-			}
-			let currentPower = previousPower * splitFactor
-			let maxRemainingBitCount = Int(ceil(log2(currentPower)))
-			let bitLimit = Int(preSplit) - extraBeltInSteps
-			guard maxRemainingBitCount >= bitLimit else {
-				return
-			}
-			allPreSplitBits.insert(bits)
-			findBits(
-				previousPower: currentPower,
-				splitFactor: 1 / 2,
-				bits: {
-					var bits = bits
-					bits[2, default: 0] += 1
-					return bits
-				}()
-			)
-			findBits(
-				previousPower: currentPower,
-				splitFactor: 1 / 3,
-				bits: {
-					var bits = bits
-					bits[3, default: 0] += 1
-					return bits
-				}()
-			)
-		}
-		findBits(
-			previousPower: battery.totalEnergy / 2,
-			splitFactor: 1,
-			bits: [:]
-		)
+			let maxAnalyzedBatteryDesignPower = battery.power * Double(analyzedBatteryCount)
+			let maxAnalyzedBatteryPower = min(totalPower, maxAnalyzedBatteryDesignPower)
+			let staticBatteryCount = Int(
+				ceil((totalPower - maxAnalyzedBatteryPower) / batteryStatic.power))
+			let requiredPower: Double =
+				totalPower - Double(staticBatteryCount) * batteryStatic.power
 
-		// Iterate all pre-split combinations
-		for preSplitBits in allPreSplitBits {
-			if solutions[preSplitBits] == nil {
-				solutions[preSplitBits] = Array(repeating: nil, count: maxDepthLimit)
-			}
-			let preSplit = preSplitBits.reduce(1.0) {
-				$0 * pow(Double($1.key), Double($1.value))
-			}
-			let depthLimit = min(maxDepthLimit, Int(preSplit) - extraBeltInSteps)
+			let actualBatteryCount = Int(ceil(requiredPower / battery.power))
 
-			let totalBatteryPower: Double = battery.totalEnergy / 2 / preSplit
+			// --- Derived vars ---
 
-			guard battery.power * Double(actualBatteryCount) > requiredPower else {
-				continue
-			}
-
-			// Recursive search with pruning
-			func binarySplit(
-				sourceVal: Double,
-				testBattery: Double,
-				entropy: Double,
-				n: Int,
-				steps: [Step],
-				values: [Double]
-			) {
-				guard
-					sourceVal >= 1.0,
-					steps.count < depthLimit,
-					testBattery + sourceVal > requiredPower
-				else {
+			var allPreSplitBits: Set<[Int: Int]> = []
+			func findBits(previousPower: Double, splitFactor: Double, bits: [Int: Int]) {
+				let preSplit = bits.reduce(1.0) {
+					$0 * pow(Double($1.key), Double($1.value))
+				}
+				guard preSplit <= Double(maxDepthLimit) else {
 					return
 				}
-
-				let diff = testBattery - requiredPower
-
-				// Pruning 1: Exceeded requirement (cannot decrease)
-				guard diff <= 50 else {
+				let currentPower = previousPower * splitFactor
+				let maxRemainingBitCount = Int(ceil(log2(currentPower)))
+				let bitLimit = Int(preSplit) - extraBeltInSteps
+				guard maxRemainingBitCount >= bitLimit else {
 					return
 				}
+				allPreSplitBits.insert(bits)
+				findBits(
+					previousPower: currentPower,
+					splitFactor: 1 / 2,
+					bits: {
+						var bits = bits
+						bits[2, default: 0] += 1
+						return bits
+					}()
+				)
+				findBits(
+					previousPower: currentPower,
+					splitFactor: 1 / 3,
+					bits: {
+						var bits = bits
+						bits[3, default: 0] += 1
+						return bits
+					}()
+				)
+			}
+			findBits(
+				previousPower: battery.totalEnergy / 2,
+				splitFactor: 1,
+				bits: [:]
+			)
 
-				// Record solution. 'diff' sets minOverflow to penalize high-waste solutions.
-				if diff >= allowedMinDiff, steps.last?.action == .add {
-					let overlapStats = getOverlapStats(
-						steps: steps,
-						battery: battery,
-						actualBatteryCount: actualBatteryCount,
-						requiredPower: requiredPower,
-						analyzedBatteryCount: analyzedBatteryCount,
-						preSplit: preSplit,
-						minOverflow: diff
-					)
-					let profile = overlapStats.profile
+			// Iterate all pre-split combinations
+			for preSplitBits in allPreSplitBits {
+				if solutions[preSplitBits] == nil {
+					solutions[preSplitBits] = Array(repeating: nil, count: maxDepthLimit)
+				}
+				let preSplit = preSplitBits.reduce(1.0) {
+					$0 * pow(Double($1.key), Double($1.value))
+				}
+				let depthLimit = min(maxDepthLimit, Int(preSplit) - extraBeltInSteps)
 
-					// Must satisfy full charge reset (hard requirement)
-					guard profile.hitFullCharge else {
+				let totalBatteryPower: Double = battery.totalEnergy / 2 / preSplit
+
+				guard battery.power * Double(actualBatteryCount) > requiredPower else {
+					continue
+				}
+
+				// Recursive search with pruning
+				func binarySplit(
+					sourceVal: Double,
+					testBattery: Double,
+					entropy: Double,
+					n: Int,
+					steps: [Step],
+					values: [Double]
+				) {
+					guard
+						sourceVal >= 1.0,
+						steps.count < depthLimit,
+						testBattery + sourceVal > requiredPower
+					else {
 						return
 					}
 
-					let stopToOutageSeconds: Double =
-						(requiredPower > 0.000001)
-						? (coreMaxCapacity / requiredPower)
-						: Double.infinity
+					let diff = testBattery - requiredPower
 
-					let requiredStopInterval = maxStopToOutageSeconds ?? overlapStats.maxAllStoppedDuration
-
-					// Must survive the specified stop interval (or automatically calculated max stop duration)
-					if stopToOutageSeconds + 0.000001 < requiredStopInterval {
+					// Relaxed pruning threshold to accommodate high-surplus solutions
+					guard diff <= 50 else {
 						return
 					}
 
-					let sol = Solution(
-						finalC: testBattery,
-						entropy: entropy,
-						preSplitBits: preSplitBits,
-						steps: steps,
-						splitValues: values,
-						diff: diff,
-						overlap: profile,
-						actualBatteryCount: actualBatteryCount,
-						requiredPower: requiredPower,
-						analyzedBatteryCount: analyzedBatteryCount,
-						staticBatteryCount: staticBatteryCount,
-						depthLimit: depthLimit,
-						stopToOutageSeconds: stopToOutageSeconds,
-						requiredStopIntervalSeconds: requiredStopInterval
-					)
-					let index = steps.count
-					if let existing = solutions[preSplitBits]![index] {
-						if isBetterSolution(sol, than: existing) {
+					// Record solution. 'diff' sets minOverflow to penalize high-waste solutions.
+					if diff >= allowedMinDiff, steps.last?.action == .add {
+						let overlapStats = getOverlapStats(
+							steps: steps,
+							battery: battery,
+							actualBatteryCount: actualBatteryCount,
+							requiredPower: requiredPower,
+							analyzedBatteryCount: analyzedBatteryCount,
+							preSplit: preSplit,
+							minOverflow: diff
+						)
+						let profile = overlapStats.profile
+
+						// Must satisfy full charge reset (hard requirement)
+						guard profile.hitFullCharge else {
+							return
+						}
+
+						// Must satisfy max shortage duration limit
+						if profile.maxShortageDuration > maxShortageDurationLimitInSecond {
+							return
+						}
+
+						let stopToOutageSeconds = coreMaxCapacity / requiredPower
+
+						// Must survive the max all stopped duration
+						if stopToOutageSeconds < overlapStats.maxAllStoppedDuration {
+							return
+						}
+
+						let requiredStopInterval =
+							maxStopToOutageSeconds ?? overlapStats.maxAllStoppedDuration
+
+						// Must survive the specified stop interval (or automatically calculated max stop duration)
+						if stopToOutageSeconds < requiredStopInterval {
+							return
+						}
+
+						let sol = Solution(
+							finalC: testBattery,
+							entropy: entropy,
+							preSplitBits: preSplitBits,
+							steps: steps,
+							splitValues: values,
+							diff: diff,
+							overlap: profile,
+							actualBatteryCount: actualBatteryCount,
+							requiredPower: requiredPower,
+							analyzedBatteryCount: analyzedBatteryCount,
+							staticBatteryCount: staticBatteryCount,
+							depthLimit: depthLimit,
+							stopToOutageSeconds: stopToOutageSeconds,
+							requiredStopIntervalSeconds: requiredStopInterval
+						)
+						let index = steps.count
+						if let existing = solutions[preSplitBits]![index] {
+							if isBetterSolution(sol, than: existing) {
+								solutions[preSplitBits]![index] = sol
+							}
+						} else {
 							solutions[preSplitBits]![index] = sol
 						}
-					} else {
-						solutions[preSplitBits]![index] = sol
 					}
+
+					// Pruning 2: Max possible power check (Upper bound assumption)
+					let remaining = Double(depthLimit - steps.count)
+					let maxPotential = sourceVal * (1.0 - pow(0.5, remaining))
+
+					if testBattery + maxPotential < requiredPower {
+						return
+					}
+
+					// Binary Split
+
+					let half: Double = sourceVal / 2
+
+					// Branch 1: Add
+					binarySplit(
+						sourceVal: half,
+						testBattery: testBattery + half,
+						entropy: entropy,
+						n: n + 1,
+						steps: steps + [Step(type: .two, action: .add)],
+						values: values + [half]
+					)
+
+					// Branch 2: Discard (entropy +)
+					let entropyIncrement = 1.0 / pow(2.0, Double(n))
+					binarySplit(
+						sourceVal: half,
+						testBattery: testBattery,
+						entropy: entropy + entropyIncrement,
+						n: n + 1,
+						steps: steps + [Step(type: .two, action: .discard)],
+						values: values + [half]
+					)
+
+					guard enableThree else {
+						return
+					}
+
+					// Ternary Split
+					let third: Double = sourceVal / 3
+
+					// Branch 3: Add
+					binarySplit(
+						sourceVal: third,
+						testBattery: testBattery + third,
+						entropy: entropy,
+						n: n,
+						steps: steps + [Step(type: .three, action: .add)],
+						values: values + [third]
+					)
+
+					// Branch 4: Discard
+					binarySplit(
+						sourceVal: third,
+						testBattery: testBattery,
+						entropy: entropy,
+						n: n,
+						steps: steps + [Step(type: .three, action: .discard)],
+						values: values + [third]
+					)
 				}
 
-				// Pruning 2: Max possible power check (Upper bound assumption)
-				let remaining = Double(depthLimit - steps.count)
-				let maxPotential = sourceVal * (1.0 - pow(0.5, remaining))
+				// Start search
 
-				if testBattery + maxPotential < requiredPower {
-					return
-				}
-
-				// Binary Split
-
-				let half = sourceVal / 2.0
-
-				// Branch 1: Add
 				binarySplit(
-					sourceVal: half,
-					testBattery: testBattery + half,
-					entropy: entropy,
-					n: n + 1,
-					steps: steps + [Step(type: .two, action: .add)],
-					values: values + [half]
-				)
-
-				// Branch 2: Discard (entropy +)
-				let entropyIncrement = 1.0 / pow(2.0, Double(n))
-				binarySplit(
-					sourceVal: half,
-					testBattery: testBattery,
-					entropy: entropy + entropyIncrement,
-					n: n + 1,
-					steps: steps + [Step(type: .two, action: .discard)],
-					values: values + [half]
-				)
-
-				guard enableThree else {
-					return
-				}
-
-				// Ternary Split
-				let third = sourceVal / 3.0
-
-				// Branch 3: Add
-				binarySplit(
-					sourceVal: third,
-					testBattery: testBattery + third,
-					entropy: entropy,
-					n: n,
-					steps: steps + [Step(type: .three, action: .add)],
-					values: values + [third]
-				)
-
-				// Branch 4: Discard
-				binarySplit(
-					sourceVal: third,
-					testBattery: testBattery,
-					entropy: entropy,
-					n: n,
-					steps: steps + [Step(type: .three, action: .discard)],
-					values: values + [third]
+					sourceVal: totalBatteryPower,
+					testBattery: 0,
+					entropy: 0,
+					n: 0,
+					steps: [],
+					values: []
 				)
 			}
-
-			// Start search
-
-			binarySplit(
-				sourceVal: totalBatteryPower,
-				testBattery: 0.0,
-				entropy: 0.0,
-				n: 0,
-				steps: [],
-				values: []
-			)
 		}
-	}
 
-	var uniqueSolutions: [String: Solution] = [:]
-	for sol in solutions.values.flatMap(\.self).compactMap(\.self) {
-		let key = sol.allActions
-		if let existing = uniqueSolutions[key] {
-			if isBetterSolution(sol, than: existing) {
+		var uniqueSolutions: [String: Solution] = [:]
+		for sol in solutions.values.flatMap(\.self).compactMap(\.self) {
+			let key = sol.allActions
+			if let existing = uniqueSolutions[key] {
+				if isBetterSolution(sol, than: existing) {
+					uniqueSolutions[key] = sol
+				}
+			} else {
 				uniqueSolutions[key] = sol
 			}
-		} else {
-			uniqueSolutions[key] = sol
 		}
-	}
 
-	let tops = uniqueSolutions.values.sorted(by: { (a, b) -> Bool in
-		return isBetterSolution(a, than: b)
-	}).prefix(showTopSolutions)
+		let tops = uniqueSolutions.values.sorted(by: { (a, b) -> Bool in
+			return isBetterSolution(a, than: b)
+		}).prefix(showTopSolutions)
 
-	guard !tops.isEmpty else {
-		print("\n==================================================")
-		print("❌ 未找到任何符合条件的方案")
-		print("==================================================")
-		continue
-	}
-
-	for (index, sol) in tops.enumerated() {
-		if index > 0 {
-			print("\n\t==================================================")
-			print("\n")
+		guard !tops.isEmpty else {
+			print("\t❌ 当前需求功率 \(currentBaseRequiredPower) 未找到符合条件的方案, 自动增加 5 功率重试...\n")
+			currentBaseRequiredPower += 5
+			continue
 		}
-		analyzeSolutionOverlap(
-			sol,
-			battery: battery,
-			batteryStatic: batteryStatic
-		)
-	}
+
+		// Found solution, print and break inner loop to next config
+		if currentBaseRequiredPower > config.baseRequiredPower {
+			print("\t✅ 在增加到 \(currentBaseRequiredPower) 功率后找到方案 (原需求: \(config.baseRequiredPower))")
+		}
+
+		for (index, sol) in tops.enumerated() {
+			if index > 0 {
+				print("\n\t==================================================")
+				print("\n")
+			}
+			analyzeSolutionOverlap(
+				sol,
+				battery: battery,
+				batteryStatic: batteryStatic
+			)
+		}
+		break
+	}  // end while true
 }
