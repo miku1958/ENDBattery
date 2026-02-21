@@ -14,7 +14,7 @@ let configs: [Config] = [
 		analyzedBattery: .purple,
 
 		/// 你屏幕上显示的总功率需求
-		baseRequiredPower: 4775
+		baseRequiredPower: 4710
 	),
 
 	Config(
@@ -26,7 +26,7 @@ let configs: [Config] = [
 		analyzedBattery: .lowEarth,
 
 		/// 你屏幕上显示的总功率需求
-		baseRequiredPower: 1835
+		baseRequiredPower: 1720
 	),
 ]
 
