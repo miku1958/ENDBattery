@@ -29,5 +29,8 @@ You are an expert Swift developer working on a command-line tool managed by Swif
 - Prefer `struct` over `class` where appropriate.
 - Ensure error handling is robust (e.g., using `do-catch` blocks).
 - **No Redundant Comments:** Do NOT add meaningless comments (e.g., `// New property`, `// Update`, `// Added function`) when introducing changes. Only guide the user if the logic is complex.
-- **NO VERBOSE THINKING:** DO NOT include your reasoning process, "thinking out loud", or conversational text in code comments. Code should be self-explanatory or have concise technical documentation strings.
+- **NO THINKING IN COMMENTS (CRITICAL):** NEVER write your internal reasoning, trial-and-error process, or conversational filler in code comments. 
+  - ❌ **FORBIDDEN:** `// Wait, the logic is...`, `// Actually, let's try...`, `// I should probably...`
+  - ✅ **ALLOWED:** Only concise, technical explanations of the *final* decided logic (the "Why" and "What").
+  - If you need to think step-by-step, do it in your chat response text OUTSIDE of the code blocks.
 - **Language Requirement:** All comments in code located **BELOW** the separator line `/* ————————————————————————————— 下面不用看 ————————————————————————————— */` MUST be written in **English**.
