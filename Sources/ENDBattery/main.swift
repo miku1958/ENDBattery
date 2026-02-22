@@ -14,7 +14,7 @@ let configs: [Config] = [
 		analyzedBattery: .purple,
 
 		/// 你屏幕上显示的总功率需求
-		baseRequiredPower: 4710
+		baseRequiredPower: 4985
 	),
 
 	Config(
@@ -358,69 +358,75 @@ class Solution {
 		self.requiredStopIntervalSeconds = requiredStopIntervalSeconds
 	}
 
+	lazy var totalStepCount: Int = {
+		var count = 0
+		for (_, c) in preSplitBits { count += c }
+		count += steps.count
+		return count
+	}()
+
 	lazy var allActions: String = {
-		// 1. Collect all actions including pre-split
 		var allSteps: [(type: Int, action: Action)] = []
 
-		// Pre-split bits are always discards
 		for (bit, count) in preSplitBits {
 			for _ in 0..<count {
 				allSteps.append((type: bit, action: .discard))
 			}
 		}
 
-		// Solution steps
 		for step in steps {
 			let bit = (step.type == .two) ? 2 : 3
 			allSteps.append((type: bit, action: step.action))
 		}
 
-		var groups: [[(type: Int, action: Action)]] = []
+		// Group consecutive same-action steps, sort discards (3 before 2) within each group
+		var actionGroups: [[(type: Int, action: Action)]] = []
 		if !allSteps.isEmpty {
 			var currentGroup: [(type: Int, action: Action)] = [allSteps[0]]
 			for i in 1..<allSteps.count {
-				let step = allSteps[i]
-				let prev = allSteps[i - 1]
-				if step.action == prev.action {
-					currentGroup.append(step)
+				if allSteps[i].action == allSteps[i - 1].action {
+					currentGroup.append(allSteps[i])
 				} else {
-					groups.append(currentGroup)
-					currentGroup = [step]
+					actionGroups.append(currentGroup)
+					currentGroup = [allSteps[i]]
 				}
 			}
-			groups.append(currentGroup)
+			actionGroups.append(currentGroup)
 		}
 
-		var resultParts: [String] = []
-
-		for group in groups {
-			let action = group[0].action
-			var stepsToProcess = group
-
-			// Sort only if it's a discard group
-			if action == .discard {
-				stepsToProcess.sort { $0.type > $1.type }  // 3 before 2
+		var orderedSteps: [(type: Int, action: Action)] = []
+		for group in actionGroups {
+			if group[0].action == .discard {
+				orderedSteps.append(contentsOf: group.sorted { $0.type > $1.type })
+			} else {
+				orderedSteps.append(contentsOf: group)
 			}
-
-			// Convert to strings with separators
-			var groupStrings: [String] = []
-			var lastType: Int? = nil
-
-			for step in stepsToProcess {
-				let typeStr = (step.type == 2) ? "2" : "3"
-				let actStr = (step.action == .add) ? "🟢" : "🔴"
-				let str = "\(typeStr)\(actStr)"
-
-				if let last = lastType, last != step.type {
-					groupStrings.append("»»» ")  // Inner group separator
-				}
-				groupStrings.append(str)
-				lastType = step.type
-			}
-			resultParts.append(groupStrings.joined(separator: "  "))
 		}
 
-		return resultParts.joined(separator: "  »»»  ")
+		guard !orderedSteps.isEmpty else { return "" }
+
+		// Run-length encode consecutive identical (type + action) steps
+		var result: [String] = []
+		var curType = orderedSteps[0].type
+		var curAction = orderedSteps[0].action
+		var count = 1
+
+		for i in 1..<orderedSteps.count {
+			let s = orderedSteps[i]
+			if s.type == curType && s.action == curAction {
+				count += 1
+			} else {
+				let actStr = (curAction == .add) ? "🟢" : "🔴"
+				result.append(count > 1 ? "\(curType)\(actStr)×\(count)" : "\(curType)\(actStr)")
+				curType = s.type
+				curAction = s.action
+				count = 1
+			}
+		}
+		let actStr = (curAction == .add) ? "🟢" : "🔴"
+		result.append(count > 1 ? "\(curType)\(actStr)×\(count)" : "\(curType)\(actStr)")
+
+		return result.joined(separator: "     ")
 	}()
 }
 
@@ -556,16 +562,25 @@ func getOverlapStats(
 		} else {
 			var merged: [Double] = []
 			merged.reserveCapacity(baseArrivals.count + arr.count)
-			var i = 0, j = 0
+			var i = 0
+			var j = 0
 			while i < baseArrivals.count && j < arr.count {
 				if baseArrivals[i] <= arr[j] {
-					merged.append(baseArrivals[i]); i += 1
+					merged.append(baseArrivals[i])
+					i += 1
 				} else {
-					merged.append(arr[j]); j += 1
+					merged.append(arr[j])
+					j += 1
 				}
 			}
-			while i < baseArrivals.count { merged.append(baseArrivals[i]); i += 1 }
-			while j < arr.count { merged.append(arr[j]); j += 1 }
+			while i < baseArrivals.count {
+				merged.append(baseArrivals[i])
+				i += 1
+			}
+			while j < arr.count {
+				merged.append(arr[j])
+				j += 1
+			}
 			baseArrivals = merged
 		}
 	}
@@ -617,7 +632,9 @@ func getOverlapStats(
 	if computeLongestCycle {
 		let maxDurationForCycle = 2.0 * minSimulationDurationInHour * 3600
 		let measureWindowCycles = simCycleCount - 1
-		if measureWindowCycles < 1 && singleCycleDuration * Double(simCycleCount) < maxDurationForCycle {
+		if measureWindowCycles < 1
+			&& singleCycleDuration * Double(simCycleCount) < maxDurationForCycle
+		{
 			simCycleCount = max(simCycleCount, Int(ceil(maxDurationForCycle / singleCycleDuration)))
 		}
 	}
@@ -706,7 +723,8 @@ func getOverlapStats(
 			} else {
 				var merged: [EventPoint] = []
 				merged.reserveCapacity(pevents.count + evts.count)
-				var i = 0, j = 0
+				var i = 0
+				var j = 0
 				while i < pevents.count && j < evts.count {
 					let useI: Bool
 					if abs(pevents[i].time - evts[j].time) < 0.0001 {
@@ -715,13 +733,21 @@ func getOverlapStats(
 						useI = pevents[i].time < evts[j].time
 					}
 					if useI {
-						merged.append(pevents[i]); i += 1
+						merged.append(pevents[i])
+						i += 1
 					} else {
-						merged.append(evts[j]); j += 1
+						merged.append(evts[j])
+						j += 1
 					}
 				}
-				while i < pevents.count { merged.append(pevents[i]); i += 1 }
-				while j < evts.count { merged.append(evts[j]); j += 1 }
+				while i < pevents.count {
+					merged.append(pevents[i])
+					i += 1
+				}
+				while j < evts.count {
+					merged.append(evts[j])
+					j += 1
+				}
 				pevents = merged
 			}
 		}
@@ -1068,7 +1094,7 @@ func analyzeSolutionOverlap(
 
 	// print("\n==================================================")
 
-	print("\t🛠 操作步骤:　\(solution.allActions)")
+	print("\t🛠 操作步骤(\(solution.totalStepCount)):　\(solution.allActions)")
 
 	if stats.longestFullChargeCycle > 0 {
 		print("\t🔄 最长周期:　\(formatDuration(stats.longestFullChargeCycle)) (最差分流下满电→最低→满电)")
@@ -1407,15 +1433,17 @@ for config in configs {
 			let preSplit = sol.preSplitBits.reduce(1.0) {
 				$0 * pow(Double($1.key), Double($1.value))
 			}
-			guard let worstStats = findWorstCaseOverlapStats(
-				steps: sol.steps,
-				battery: battery,
-				actualBatteryCount: sol.actualBatteryCount,
-				requiredPower: sol.requiredPower,
-				analyzedBatteryCount: sol.analyzedBatteryCount,
-				preSplit: preSplit,
-				minOverflow: sol.diff
-			) else {
+			guard
+				let worstStats = findWorstCaseOverlapStats(
+					steps: sol.steps,
+					battery: battery,
+					actualBatteryCount: sol.actualBatteryCount,
+					requiredPower: sol.requiredPower,
+					analyzedBatteryCount: sol.analyzedBatteryCount,
+					preSplit: preSplit,
+					minOverflow: sol.diff
+				)
+			else {
 				continue
 			}
 			validatedTops.append((sol, worstStats))
