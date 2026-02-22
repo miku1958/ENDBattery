@@ -161,6 +161,106 @@ struct Step: Equatable {
 	let action: Action
 }
 
+struct SplitterConfig {
+	let branchSlot: Int
+	let continuationSlot: Int
+}
+
+func defaultSplitterConfigs(for steps: [Step]) -> [SplitterConfig] {
+	return steps.map { _ in SplitterConfig(branchSlot: 0, continuationSlot: 1) }
+}
+
+func enumerateSplitterConfigs(for steps: [Step]) -> [[SplitterConfig]] {
+	var result: [[SplitterConfig]] = [[]]
+	for step in steps {
+		let slotCount = (step.type == .three) ? 3 : 2
+		var newResult: [[SplitterConfig]] = []
+		for existing in result {
+			if step.action == .add {
+				for b in 0..<slotCount {
+					for c in 0..<slotCount where c != b {
+						var config = existing
+						config.append(SplitterConfig(branchSlot: b, continuationSlot: c))
+						newResult.append(config)
+					}
+				}
+			} else {
+				for c in 0..<slotCount {
+					let b = (c == 0) ? 1 : 0
+					var config = existing
+					config.append(SplitterConfig(branchSlot: b, continuationSlot: c))
+					newResult.append(config)
+				}
+			}
+		}
+		result = newResult
+	}
+	return result
+}
+
+func computeActiveStreams(
+	steps: [Step],
+	rootPeriod: Int,
+	splitterConfigs: [SplitterConfig]
+) -> [(period: Int, offset: Int)] {
+	var currentP = rootPeriod
+	var currentO = 0
+	var streams: [(period: Int, offset: Int)] = []
+
+	for (i, step) in steps.enumerated() {
+		let multiplier = (step.type == .three) ? 3 : 2
+		let config = splitterConfigs[i]
+
+		if step.action == .add {
+			let branchO = currentO + config.branchSlot * currentP
+			streams.append((period: currentP * multiplier, offset: branchO))
+		}
+
+		currentO = currentO + config.continuationSlot * currentP
+		currentP = currentP * multiplier
+	}
+
+	return streams
+}
+
+func enumerateUniqueStreamSets(
+	steps: [Step],
+	rootPeriod: Int
+) -> [[(period: Int, offset: Int)]] {
+	let allConfigs = enumerateSplitterConfigs(for: steps)
+
+	var seenKeys: Set<[Int]> = []
+	var result: [[(period: Int, offset: Int)]] = []
+
+	for configs in allConfigs {
+		let streams = computeActiveStreams(
+			steps: steps, rootPeriod: rootPeriod, splitterConfigs: configs)
+
+		guard !streams.isEmpty else {
+			let emptyKey: [Int] = []
+			if seenKeys.insert(emptyKey).inserted {
+				result.append([])
+			}
+			continue
+		}
+
+		let shift = streams[0].offset
+		var normalizedKey: [Int] = []
+		normalizedKey.reserveCapacity(streams.count * 2)
+		for s in streams {
+			let normOffset = ((s.offset - shift) % s.period + s.period) % s.period
+			normalizedKey.append(s.period)
+			normalizedKey.append(normOffset)
+		}
+
+		if seenKeys.insert(normalizedKey).inserted {
+			result.append(streams)
+		}
+	}
+
+	return result
+}
+
 struct OverlapProfile: Comparable {
 	let overflowPerSecond: Double
 	let minBatteryLevel: Double
@@ -370,42 +470,48 @@ func getOverlapStats(
 	requiredPower: Double,
 	analyzedBatteryCount: Int,
 	preSplit: Double,
-	minOverflow: Double
+	minOverflow: Double,
+	splitterConfigs: [SplitterConfig]? = nil,
+	precomputedStreams: [(period: Int, offset: Int)]? = nil,
+	computeLongestCycle: Bool = false
 ) -> OverlapStats {
-	// Simulation logic:
-	// - Core used when battery depleted.
-	// - Core charges on excess (waste after full).
-	// - Transport delay: 1 tile / 2s.
 
 	let rootPeriod: Int = Int((Double(beltSecondsPerTile) * preSplit).rounded())
 	struct Stream {
 		let period: Int
 		let offset: Int
 	}
-	var activeStreams: [Stream] = []
+	var activeStreams: [Stream]
 
-	var currentP = rootPeriod
-	var currentO = 0
+	if let pre = precomputedStreams {
+		activeStreams = pre.map { Stream(period: $0.period, offset: $0.offset) }
+	} else {
+		activeStreams = []
+		var currentP = rootPeriod
+		var currentO = 0
 
-	for step in steps {
-		let isTernary = (step.type == .three)
-		let multiplier = isTernary ? 3 : 2
+		let configs = splitterConfigs ?? defaultSplitterConfigs(for: steps)
 
-		let branchP = currentP * multiplier
-		let branchO = currentO
+		for (i, step) in steps.enumerated() {
+			let isTernary = (step.type == .three)
+			let multiplier = isTernary ? 3 : 2
+			let config = configs[i]
 
-		let nextP = currentP * multiplier
-		let nextO = currentO + currentP
+			let branchP = currentP * multiplier
+			let branchO = currentO + config.branchSlot * currentP
 
-		if step.action == .add {
-			// Sync stream delays
-			activeStreams.append(
-				Stream(period: branchP, offset: branchO)
-			)
+			let nextP = currentP * multiplier
+			let nextO = currentO + config.continuationSlot * currentP
+
+			if step.action == .add {
+				activeStreams.append(
+					Stream(period: branchP, offset: branchO)
+				)
+			}
+
+			currentP = nextP
+			currentO = nextO
 		}
-
-		currentP = nextP
-		currentO = nextO
 	}
 
 	func gcd(_ a: Int, _ b: Int) -> Int {
@@ -429,22 +535,40 @@ func getOverlapStats(
 	// Simulate 2 cycles; measure stats on the 2nd to ensure stable state.
 	let singleCycleDuration = Double(cycle)
 
-	// Generate events with splitter delays
-	var arrivalTimes: [Double] = []
+	// Generate events with splitter delays via sorted merge
+	var perStreamArrivals: [[Double]] = []
 	for s in activeStreams {
+		var arrivals: [Double] = []
 		let startPhase = s.offset % cycle
 		var t = startPhase
-		// Generate one cycle of events
 		while t < cycle {
-			let rawTime = Double(t)
-			let time = rawTime.truncatingRemainder(dividingBy: singleCycleDuration)
-			arrivalTimes.append(time)
+			arrivals.append(Double(t))
 			t += s.period
 		}
+		perStreamArrivals.append(arrivals)
 	}
-	arrivalTimes.sort()
 
-	let baseArrivals = arrivalTimes
+	// Merge sorted arrays without closure-based sort
+	var baseArrivals: [Double] = []
+	for arr in perStreamArrivals {
+		if baseArrivals.isEmpty {
+			baseArrivals = arr
+		} else {
+			var merged: [Double] = []
+			merged.reserveCapacity(baseArrivals.count + arr.count)
+			var i = 0, j = 0
+			while i < baseArrivals.count && j < arr.count {
+				if baseArrivals[i] <= arr[j] {
+					merged.append(baseArrivals[i]); i += 1
+				} else {
+					merged.append(arr[j]); j += 1
+				}
+			}
+			while i < baseArrivals.count { merged.append(baseArrivals[i]); i += 1 }
+			while j < arr.count { merged.append(arr[j]); j += 1 }
+			baseArrivals = merged
+		}
+	}
 
 	// Net benefit constants
 	let oneBatteryTotalEnergy = battery.totalEnergy
@@ -469,7 +593,8 @@ func getOverlapStats(
 				netBenefitPerSecond: saveRateInBatteriesPerSec
 					- (minOverflow / oneBatteryTotalEnergy),
 				maxShortageDuration: 0
-			)
+			),
+			longestFullChargeCycle: 0
 		)
 	}
 
@@ -487,6 +612,14 @@ func getOverlapStats(
 	if singleCycleDuration * Double(simCycleCount) < minDurationSeconds {
 		let minCycleTarget = Int(ceil(minDurationSeconds / singleCycleDuration))
 		simCycleCount = max(simCycleCount, minCycleTarget)
+	}
+
+	if computeLongestCycle {
+		let maxDurationForCycle = 2.0 * minSimulationDurationInHour * 3600
+		let measureWindowCycles = simCycleCount - 1
+		if measureWindowCycles < 1 && singleCycleDuration * Double(simCycleCount) < maxDurationForCycle {
+			simCycleCount = max(simCycleCount, Int(ceil(maxDurationForCycle / singleCycleDuration)))
+		}
 	}
 
 	// Measure after warmup cycle unless cycle is very long (covering 20h+ without warmup is fine).
@@ -536,19 +669,62 @@ func getOverlapStats(
 		let time: Double
 		let type: Int
 	}
-	var pevents: [EventPoint] = []
 
-	for inv in combinedIntervals {
-		pevents.append(EventPoint(time: inv.start, type: 1))
-		pevents.append(EventPoint(time: inv.end, type: -1))
-	}
-
-	pevents.sort { a, b in
-		// Process end events before start events at same timestamp
-		if abs(a.time - b.time) < 0.0001 {
-			return a.type < b.type
+	// Build sorted events via merge instead of closure-based sort
+	var pevents: [EventPoint]
+	if analyzedBatteryCount == 1 {
+		pevents = []
+		pevents.reserveCapacity(combinedIntervals.count * 2)
+		for inv in combinedIntervals {
+			if abs(inv.start - inv.end) < 0.0001 {
+				pevents.append(EventPoint(time: inv.start, type: 1))
+				pevents.append(EventPoint(time: inv.end, type: -1))
+			} else {
+				pevents.append(EventPoint(time: inv.start, type: 1))
+				pevents.append(EventPoint(time: inv.end, type: -1))
+			}
 		}
-		return a.time < b.time
+	} else {
+		var perGenEvents: [[EventPoint]] = []
+		var offset = 0
+		for arrivals in genArrivals {
+			let intervals = Array(combinedIntervals[offset..<(offset + arrivals.count)])
+			offset += arrivals.count
+			var evts: [EventPoint] = []
+			evts.reserveCapacity(intervals.count * 2)
+			for inv in intervals {
+				evts.append(EventPoint(time: inv.start, type: 1))
+				evts.append(EventPoint(time: inv.end, type: -1))
+			}
+			perGenEvents.append(evts)
+		}
+
+		pevents = []
+		for evts in perGenEvents {
+			if pevents.isEmpty {
+				pevents = evts
+			} else {
+				var merged: [EventPoint] = []
+				merged.reserveCapacity(pevents.count + evts.count)
+				var i = 0, j = 0
+				while i < pevents.count && j < evts.count {
+					let useI: Bool
+					if abs(pevents[i].time - evts[j].time) < 0.0001 {
+						useI = pevents[i].type <= evts[j].type
+					} else {
+						useI = pevents[i].time < evts[j].time
+					}
+					if useI {
+						merged.append(pevents[i]); i += 1
+					} else {
+						merged.append(evts[j]); j += 1
+					}
+				}
+				while i < pevents.count { merged.append(pevents[i]); i += 1 }
+				while j < evts.count { merged.append(evts[j]); j += 1 }
+				pevents = merged
+			}
+		}
 	}
 
 	// Measurement Window: [cycleTime, simCycleCount*cycleTime]
@@ -566,6 +742,8 @@ func getOverlapStats(
 	var maxAllStoppedDuration: Double = 0
 	var currentAllStoppedStreak: Double = 0
 	var maxShortageDuration: Double = 0
+
+	var fullChargeTimestamps: [Double] = []
 
 	// Shortage tracking
 	// shortageStartTime: The time when the current shortage sequence began.
@@ -603,6 +781,19 @@ func getOverlapStats(
 				nextLevel = coreMaxCapacity
 			} else if possibleLevel <= 0 {
 				nextLevel = 0
+			}
+
+			if computeLongestCycle
+				&& levelBefore < coreMaxCapacity - 0.001
+				&& possibleLevel >= coreMaxCapacity - 0.001
+			{
+				if netPower > 0.001 {
+					let timeToFull = (coreMaxCapacity - levelBefore) / netPower
+					let tFull = lastT + timeToFull
+					if tFull >= measureStart && tFull <= measureEnd {
+						fullChargeTimestamps.append(tFull)
+					}
+				}
 			}
 
 			// Logic for Shortage Duration:
@@ -728,6 +919,19 @@ func getOverlapStats(
 
 			let possibleLevel = currentLevel + netPower * dt
 
+			if computeLongestCycle
+				&& currentLevel < coreMaxCapacity - 0.001
+				&& possibleLevel >= coreMaxCapacity - 0.001
+			{
+				if netPower > 0.001 {
+					let timeToFull = (coreMaxCapacity - currentLevel) / netPower
+					let tFull = lastT + timeToFull
+					if tFull >= measureStart && tFull <= measureEnd {
+						fullChargeTimestamps.append(tFull)
+					}
+				}
+			}
+
 			if possibleLevel > coreMaxCapacity {
 				totalOverflow += (possibleLevel - coreMaxCapacity)
 				currentLevel = coreMaxCapacity
@@ -748,6 +952,20 @@ func getOverlapStats(
 	let measuredOverflowPerSec = totalOverflow / measurementDuration
 	let overflowPerSec = max(measuredOverflowPerSec, minOverflow)
 
+	var longestFullChargeCycle: Double = 0
+	if computeLongestCycle {
+		if fullChargeTimestamps.count >= 2 {
+			for i in 1..<fullChargeTimestamps.count {
+				longestFullChargeCycle = max(
+					longestFullChargeCycle,
+					fullChargeTimestamps[i] - fullChargeTimestamps[i - 1]
+				)
+			}
+		} else {
+			longestFullChargeCycle = measurementDuration
+		}
+	}
+
 	let wasteRateInBatteriesPerSec: Double =
 		(overflowPerSec > 0) ? (overflowPerSec / oneBatteryTotalEnergy) : 0
 	let netBenefitPerSec = saveRateInBatteriesPerSec - wasteRateInBatteriesPerSec
@@ -767,28 +985,66 @@ func getOverlapStats(
 		minLevel: minLevel,
 		endLevel: currentLevel,
 		maxAllStoppedDuration: maxAllStoppedDuration,
-		profile: profile
+		profile: profile,
+		longestFullChargeCycle: longestFullChargeCycle
 	)
+}
+
+// --- Worst-case Splitter Search ---
+func findWorstCaseOverlapStats(
+	steps: [Step],
+	battery: Config.Battery,
+	actualBatteryCount: Int,
+	requiredPower: Double,
+	analyzedBatteryCount: Int,
+	preSplit: Double,
+	minOverflow: Double
+) -> OverlapStats? {
+	let maxAllowed = 2.0 * minSimulationDurationInHour * 3600
+	let stopToOutageSeconds = coreMaxCapacity / requiredPower
+	let rootPeriod = Int((Double(beltSecondsPerTile) * preSplit).rounded())
+
+	let uniqueStreamSets = enumerateUniqueStreamSets(steps: steps, rootPeriod: rootPeriod)
+
+	var worstStats: OverlapStats? = nil
+
+	for streams in uniqueStreamSets {
+		let stats = getOverlapStats(
+			steps: steps,
+			battery: battery,
+			actualBatteryCount: actualBatteryCount,
+			requiredPower: requiredPower,
+			analyzedBatteryCount: analyzedBatteryCount,
+			preSplit: preSplit,
+			minOverflow: minOverflow,
+			precomputedStreams: streams,
+			computeLongestCycle: true
+		)
+
+		if stats.longestFullChargeCycle > maxAllowed { return nil }
+		if !stats.profile.hitFullCharge { return nil }
+		if stats.profile.maxShortageDuration > maxShortageDurationLimitInSecond { return nil }
+		if stopToOutageSeconds < stats.maxAllStoppedDuration { return nil }
+
+		if let current = worstStats {
+			if stats.longestFullChargeCycle > current.longestFullChargeCycle {
+				worstStats = stats
+			}
+		} else {
+			worstStats = stats
+		}
+	}
+
+	return worstStats
 }
 
 // --- Analysis Helper ---
 func analyzeSolutionOverlap(
 	_ solution: Solution,
 	battery: Config.Battery,
-	batteryStatic: Config.Battery
+	batteryStatic: Config.Battery,
+	worstCaseStats stats: OverlapStats
 ) {
-	let preSplit = solution.preSplitBits.reduce(1.0) {
-		$0 * pow(Double($1.key), Double($1.value))
-	}
-	let stats = getOverlapStats(
-		steps: solution.steps,
-		battery: battery,
-		actualBatteryCount: solution.actualBatteryCount,
-		requiredPower: solution.requiredPower,
-		analyzedBatteryCount: solution.analyzedBatteryCount,
-		preSplit: preSplit,
-		minOverflow: solution.diff
-	)
 
 	let oneBatteryTotalEnergyGlob = battery.totalEnergy
 	let inputDoubleBatteryPowerGlob = battery.power * Double(solution.actualBatteryCount)
@@ -814,7 +1070,11 @@ func analyzeSolutionOverlap(
 
 	print("\t🛠 操作步骤:　\(solution.allActions)")
 
-	print("\t🔄 周期:　　　\(String(format: "%.3f", stats.cycleTime))秒")
+	if stats.longestFullChargeCycle > 0 {
+		print("\t🔄 最长周期:　\(formatDuration(stats.longestFullChargeCycle)) (最差分流下满电→最低→满电)")
+	} else {
+		print("\t🔄 最长周期:　无 (核心始终满电)")
+	}
 	print("\t📉 最低电量:　\(String(format: "%.4f", stats.minLevel))")
 	print("\t📊 结束电量:　\(String(format: "%.4f", stats.endLevel))")
 	// print("\t⏱ 停流间隔:　\(formatDuration(solution.requiredStopIntervalSeconds))")
@@ -869,6 +1129,7 @@ struct OverlapStats {
 	let endLevel: Double
 	let maxAllStoppedDuration: Double
 	let profile: OverlapProfile
+	let longestFullChargeCycle: Double
 }
 
 for config in configs {
@@ -1136,11 +1397,31 @@ for config in configs {
 			}
 		}
 
-		let tops = uniqueSolutions.values.sorted(by: { (a, b) -> Bool in
+		let sortedSolutions = uniqueSolutions.values.sorted(by: { (a, b) -> Bool in
 			return isBetterSolution(a, than: b)
-		}).prefix(showTopSolutions)
+		})
 
-		guard !tops.isEmpty else {
+		var validatedTops: [(Solution, OverlapStats)] = []
+		for sol in sortedSolutions {
+			guard validatedTops.count < showTopSolutions else { break }
+			let preSplit = sol.preSplitBits.reduce(1.0) {
+				$0 * pow(Double($1.key), Double($1.value))
+			}
+			guard let worstStats = findWorstCaseOverlapStats(
+				steps: sol.steps,
+				battery: battery,
+				actualBatteryCount: sol.actualBatteryCount,
+				requiredPower: sol.requiredPower,
+				analyzedBatteryCount: sol.analyzedBatteryCount,
+				preSplit: preSplit,
+				minOverflow: sol.diff
+			) else {
+				continue
+			}
+			validatedTops.append((sol, worstStats))
+		}
+
+		guard !validatedTops.isEmpty else {
 			print("\t❌ 当前需求功率 \(currentBaseRequiredPower) 未找到符合条件的方案, 自动增加 5 功率重试...\n")
 			currentBaseRequiredPower += 5
 			continue
@@ -1151,7 +1432,7 @@ for config in configs {
 			print("\t✅ 在增加到 \(currentBaseRequiredPower) 功率后找到方案 (原需求: \(config.baseRequiredPower))")
 		}
 
-		for (index, sol) in tops.enumerated() {
+		for (index, (sol, worstStats)) in validatedTops.enumerated() {
 			if index > 0 {
 				print("\n\t==================================================")
 				print("\n")
@@ -1159,7 +1440,8 @@ for config in configs {
 			analyzeSolutionOverlap(
 				sol,
 				battery: battery,
-				batteryStatic: batteryStatic
+				batteryStatic: batteryStatic,
+				worstCaseStats: worstStats
 			)
 		}
 		break
