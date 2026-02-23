@@ -40,7 +40,7 @@ let minAnalyzedBatteryCount: Int = 1
 /// 最小值为 1
 let extraBeltInSteps: Int = 1
 
-/// 最大递归深度
+/// 最大递归深度, 会影响结果的长度和运行的速度, 这个值越大越慢, 但可能找到更优解
 let maxDepthLimit: Int = 9
 
 /// 最终输出的方案数量, 1会输出最优方案, 3会输出前三方案, 以此类推
@@ -1440,7 +1440,7 @@ for config in configs {
 			candidateSolutions = allKeptSolutions
 		} else {
 			var uniqueSolutions: [String: Solution] = [:]
-			for sol in solutions.values.flatMap(\.self).compactMap(\.self) {
+			for sol in solutions.values.flatMap({ $0 }).compactMap({ $0 }) {
 				let key = sol.allActions
 				if let existing = uniqueSolutions[key] {
 					if isBetterSolution(sol, than: existing) {
