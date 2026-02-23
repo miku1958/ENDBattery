@@ -327,7 +327,7 @@ class Solution {
 	var steps: [Step]
 	var splitValues: [Double]
 	let diff: Double
-	let overlap: OverlapProfile
+	var overlap: OverlapProfile
 	let actualBatteryCount: Int
 	let requiredPower: Double
 	let analyzedBatteryCount: Int
@@ -613,36 +613,25 @@ func getOverlapStats(
 		)
 	}
 
-	// Adjust simulation duration for constant complexity
-	// Base 24h
-	let baseTargetDuration: Double = 86400
-	let adjustedTargetDuration = baseTargetDuration / Double(max(1, analyzedBatteryCount))
-
-	let computedCycles = Int(ceil(adjustedTargetDuration / singleCycleDuration))
-
-	// Enforce min simulation coverage
-	// Ensure total simulation time >= minSimulationDurationInHour
-	var simCycleCount = max(1, computedCycles)
-	let minDurationSeconds = minSimulationDurationInHour * 3600
-	if singleCycleDuration * Double(simCycleCount) < minDurationSeconds {
-		let minCycleTarget = Int(ceil(minDurationSeconds / singleCycleDuration))
-		simCycleCount = max(simCycleCount, minCycleTarget)
+	// Round-robin super-cycle: after rrCycleCount base cycles, both the
+	// arrival pattern and the generator assignment wrap around together.
+	let arrivalsPerCycle = baseArrivals.count
+	let rrCycleCount: Int
+	if arrivalsPerCycle > 0 {
+		rrCycleCount = lcm(arrivalsPerCycle, analyzedBatteryCount) / arrivalsPerCycle
+	} else {
+		rrCycleCount = 1
 	}
 
-	if computeLongestCycle {
-		let maxDurationForCycle = 2.0 * minSimulationDurationInHour * 3600
-		let measureWindowCycles = simCycleCount - 1
-		if measureWindowCycles < 1
-			&& singleCycleDuration * Double(simCycleCount) < maxDurationForCycle
-		{
-			simCycleCount = max(simCycleCount, Int(ceil(maxDurationForCycle / singleCycleDuration)))
-		}
-	}
+	let warmupCycles = rrCycleCount
+	// For longestFullChargeCycle we need >= 2 full-charge events,
+	// so measure 2 super-cycles; otherwise 1 is sufficient.
+	let measureCycles = computeLongestCycle ? (2 * rrCycleCount) : rrCycleCount
+	let simCycleCount = warmupCycles + measureCycles
 
-	// Measure after warmup cycle unless cycle is very long (covering 20h+ without warmup is fine).
-	let measureStart: Double = (simCycleCount > 1) ? singleCycleDuration : 0
-	let measureEnd: Double = Double(simCycleCount) * singleCycleDuration
-	let recoveryCheckStart: Double = measureEnd - singleCycleDuration
+	let measureStart = Double(warmupCycles) * singleCycleDuration
+	let measureEnd = Double(simCycleCount) * singleCycleDuration
+	let recoveryCheckStart = measureEnd - singleCycleDuration
 
 	var allArrivals: [Double] = []
 	for i in 0..<simCycleCount {
@@ -1032,9 +1021,48 @@ func findWorstCaseOverlapStats(
 
 	let uniqueStreamSets = enumerateUniqueStreamSets(steps: steps, rootPeriod: rootPeriod)
 
-	var worstStats: OverlapStats? = nil
+	// Further dedup by merged arrival pattern: stream sets producing
+	// identical sorted arrival sequences behave identically in simulation.
+	func dedupGCD(_ a: Int, _ b: Int) -> Int {
+		let r = a % b
+		return r == 0 ? b : dedupGCD(b, r)
+	}
+	func dedupLCM(_ a: Int, _ b: Int) -> Int {
+		return (a * b) / dedupGCD(a, b)
+	}
+
+	var dedupedStreams: [[(period: Int, offset: Int)]] = []
+	var seenArrivalKeys: Set<[Int]> = []
 
 	for streams in uniqueStreamSets {
+		guard !streams.isEmpty else {
+			if seenArrivalKeys.insert([]).inserted {
+				dedupedStreams.append([])
+			}
+			continue
+		}
+		var cycle = rootPeriod
+		for s in streams { cycle = dedupLCM(cycle, s.period) }
+
+		var arrivalTimes: [Int] = []
+		for s in streams {
+			let startPhase = ((s.offset % cycle) + cycle) % cycle
+			var t = startPhase
+			while t < cycle {
+				arrivalTimes.append(t)
+				t += s.period
+			}
+		}
+		arrivalTimes.sort()
+
+		if seenArrivalKeys.insert(arrivalTimes).inserted {
+			dedupedStreams.append(streams)
+		}
+	}
+
+	var worstStats: OverlapStats? = nil
+
+	for streams in dedupedStreams {
 		let stats = getOverlapStats(
 			steps: steps,
 			battery: battery,
@@ -1423,13 +1451,8 @@ for config in configs {
 			}
 		}
 
-		let sortedSolutions = uniqueSolutions.values.sorted(by: { (a, b) -> Bool in
-			return isBetterSolution(a, than: b)
-		})
-
 		var validatedTops: [(Solution, OverlapStats)] = []
-		for sol in sortedSolutions {
-			guard validatedTops.count < showTopSolutions else { break }
+		for sol in uniqueSolutions.values {
 			let preSplit = sol.preSplitBits.reduce(1.0) {
 				$0 * pow(Double($1.key), Double($1.value))
 			}
@@ -1446,7 +1469,13 @@ for config in configs {
 			else {
 				continue
 			}
+			sol.overlap = worstStats.profile
 			validatedTops.append((sol, worstStats))
+		}
+
+		validatedTops.sort { (a, b) in isBetterSolution(a.0, than: b.0) }
+		if validatedTops.count > showTopSolutions {
+			validatedTops = Array(validatedTops.prefix(showTopSolutions))
 		}
 
 		guard !validatedTops.isEmpty else {
