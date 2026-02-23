@@ -613,25 +613,16 @@ func getOverlapStats(
 		)
 	}
 
-	// Round-robin super-cycle: after rrCycleCount base cycles, both the
-	// arrival pattern and the generator assignment wrap around together.
+	// The system is periodic. The true period accounts for round-robin
+	// generator distribution: rrPeriod = lcm(arrivalsPerCycle, analyzedBatteryCount) / arrivalsPerCycle.
+	// Simulate 1 warmup cycle + rrPeriod measurement cycles.
 	let arrivalsPerCycle = baseArrivals.count
-	let rrCycleCount: Int
-	if arrivalsPerCycle > 0 {
-		rrCycleCount = lcm(arrivalsPerCycle, analyzedBatteryCount) / arrivalsPerCycle
-	} else {
-		rrCycleCount = 1
-	}
-
-	let warmupCycles = rrCycleCount
-	// For longestFullChargeCycle we need >= 2 full-charge events,
-	// so measure 2 super-cycles; otherwise 1 is sufficient.
-	let measureCycles = computeLongestCycle ? (2 * rrCycleCount) : rrCycleCount
-	let simCycleCount = warmupCycles + measureCycles
-
-	let measureStart = Double(warmupCycles) * singleCycleDuration
-	let measureEnd = Double(simCycleCount) * singleCycleDuration
-	let recoveryCheckStart = measureEnd - singleCycleDuration
+	let rrPeriod = (arrivalsPerCycle > 0)
+		? analyzedBatteryCount / gcd(arrivalsPerCycle, analyzedBatteryCount) : 1
+	let simCycleCount = 1 + rrPeriod
+	let measureStart: Double = (simCycleCount > 1) ? singleCycleDuration : 0
+	let measureEnd: Double = Double(simCycleCount) * singleCycleDuration
+	let recoveryCheckStart: Double = measureEnd - singleCycleDuration
 
 	var allArrivals: [Double] = []
 	for i in 0..<simCycleCount {
