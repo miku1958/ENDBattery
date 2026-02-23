@@ -69,6 +69,11 @@ let minSimulationDurationInHour: Double = 48
 /// 缺电结束：发电机总功率 >= 需求功率，且此次充电过程能将核心电量充满。
 let maxShortageDurationLimitInSecond: Double = 1000
 
+/// 保留所有结果并在最后对所有结果进行测试
+/// 关闭时会提前过滤掉一些方案以减少最后测试的压力, 但也足够准确了.
+/// 开启后会保留所有方案并在最后测试后再进行排序, 超慢(慢500x), 并且开和关的结果大概率是一样的
+let keepAllSolutions: Bool = false
+
 /* ————————————————————————————— 下面不用看 ————————————————————————————— */
 
 let startTime = Date()
@@ -617,7 +622,8 @@ func getOverlapStats(
 	// generator distribution: rrPeriod = lcm(arrivalsPerCycle, analyzedBatteryCount) / arrivalsPerCycle.
 	// Simulate 1 warmup cycle + rrPeriod measurement cycles.
 	let arrivalsPerCycle = baseArrivals.count
-	let rrPeriod = (arrivalsPerCycle > 0)
+	let rrPeriod =
+		(arrivalsPerCycle > 0)
 		? analyzedBatteryCount / gcd(arrivalsPerCycle, analyzedBatteryCount) : 1
 	let simCycleCount = 1 + rrPeriod
 	let measureStart: Double = (simCycleCount > 1) ? singleCycleDuration : 0
@@ -1196,6 +1202,7 @@ for config in configs {
 		let stopAtCount = max(1, min(minAnalyzedBatteryCount, analyzedBatteryCount))
 
 		var solutions: [[Int: Int]: [Solution?]] = [:]
+		var allKeptSolutions: [Solution] = []
 
 		while analyzedBatteryCount >= stopAtCount {
 			defer {
@@ -1347,12 +1354,16 @@ for config in configs {
 							requiredStopIntervalSeconds: requiredStopInterval
 						)
 						let index = steps.count
-						if let existing = solutions[preSplitBits]![index] {
-							if isBetterSolution(sol, than: existing) {
+						if keepAllSolutions {
+							allKeptSolutions.append(sol)
+						} else {
+							if let existing = solutions[preSplitBits]![index] {
+								if isBetterSolution(sol, than: existing) {
+									solutions[preSplitBits]![index] = sol
+								}
+							} else {
 								solutions[preSplitBits]![index] = sol
 							}
-						} else {
-							solutions[preSplitBits]![index] = sol
 						}
 					}
 
@@ -1430,20 +1441,26 @@ for config in configs {
 			}
 		}
 
-		var uniqueSolutions: [String: Solution] = [:]
-		for sol in solutions.values.flatMap(\.self).compactMap(\.self) {
-			let key = sol.allActions
-			if let existing = uniqueSolutions[key] {
-				if isBetterSolution(sol, than: existing) {
+		var candidateSolutions: [Solution]
+		if keepAllSolutions {
+			candidateSolutions = allKeptSolutions
+		} else {
+			var uniqueSolutions: [String: Solution] = [:]
+			for sol in solutions.values.flatMap(\.self).compactMap(\.self) {
+				let key = sol.allActions
+				if let existing = uniqueSolutions[key] {
+					if isBetterSolution(sol, than: existing) {
+						uniqueSolutions[key] = sol
+					}
+				} else {
 					uniqueSolutions[key] = sol
 				}
-			} else {
-				uniqueSolutions[key] = sol
 			}
+			candidateSolutions = Array(uniqueSolutions.values)
 		}
 
 		var validatedTops: [(Solution, OverlapStats)] = []
-		for sol in uniqueSolutions.values {
+		for sol in candidateSolutions {
 			let preSplit = sol.preSplitBits.reduce(1.0) {
 				$0 * pow(Double($1.key), Double($1.value))
 			}
