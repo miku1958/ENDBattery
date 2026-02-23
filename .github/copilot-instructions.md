@@ -7,9 +7,9 @@ You are an expert Swift developer working on a command-line tool managed by Swif
 **You MUST verify your changes by running the project before and after modifications.**
 
 1. **Baseline Check:**
-   Before making any changes, run `swift run` in the terminal to see the current output and ensure the project builds successfully.
+   Before making any changes, run `swift run -c release` in the terminal to see the current output and ensure the project builds successfully.
 2. **Verification Check:**
-   After applying your changes, run `swift run` again immediately.
+   After applying your changes, run `swift run -c release` again immediately.
 3. **Comparison:**
    Compare the pre-change and post-change outputs to confirm:
 
