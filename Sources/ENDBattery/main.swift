@@ -60,10 +60,6 @@ let safetyThreshold = 0.15
 /// - 例如 1800: 要求方案在停流后至少可坚持 30 分钟不断电
 let maxStopToOutageSeconds: Double? = nil
 
-/// 模拟时长（小时）
-/// 对于短周期方案，强制模拟至少这么长时间，以确保覆盖足够多的情况
-let minSimulationDurationInHour: Double = 48
-
 /// 允许的最大缺电时间（秒）
 /// 缺电定义：当前发电机总功率 < 需求功率，导致开始消耗核心电量。
 /// 缺电结束：发电机总功率 >= 需求功率，且此次充电过程能将核心电量充满。
@@ -1012,7 +1008,6 @@ func findWorstCaseOverlapStats(
 	preSplit: Double,
 	minOverflow: Double
 ) -> OverlapStats? {
-	let maxAllowed = 2.0 * minSimulationDurationInHour * 3600
 	let stopToOutageSeconds = coreMaxCapacity / requiredPower
 	let rootPeriod = Int((Double(beltSecondsPerTile) * preSplit).rounded())
 
@@ -1072,7 +1067,6 @@ func findWorstCaseOverlapStats(
 			computeLongestCycle: true
 		)
 
-		if stats.longestFullChargeCycle > maxAllowed { return nil }
 		if !stats.profile.hitFullCharge { return nil }
 		if stats.profile.maxShortageDuration > maxShortageDurationLimitInSecond { return nil }
 		if stopToOutageSeconds < stats.maxAllStoppedDuration { return nil }
