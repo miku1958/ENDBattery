@@ -63,7 +63,7 @@ let maxStopToOutageSeconds: Double? = nil
 /// 允许的最大缺电时间（秒）
 /// 缺电定义：当前发电机总功率 < 需求功率，导致开始消耗核心电量。
 /// 缺电结束：发电机总功率 >= 需求功率，且此次充电过程能将核心电量充满。
-let maxShortageDurationLimitInSecond: Double = 40
+let maxShortageDurationLimitInSecond: Double = 1000
 
 /// 保留所有结果并在最后对所有结果进行测试
 /// 关闭时会提前过滤掉一些方案以减少最后测试的压力, 但也足够准确了.
