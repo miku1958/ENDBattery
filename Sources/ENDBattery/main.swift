@@ -1073,6 +1073,7 @@ func findWorstCaseOverlapStats(
 		)
 
 		if !stats.profile.hitFullCharge { return nil }
+		if stats.profile.minBatteryLevel <= 0 { return nil }
 		if stats.profile.maxShortageDuration > maxShortageDurationLimitInSecond { return nil }
 		if stopToOutageSeconds < stats.maxAllStoppedDuration { return nil }
 
@@ -1313,6 +1314,10 @@ for config in configs {
 
 						// Must satisfy full charge reset (hard requirement)
 						guard profile.hitFullCharge else {
+							return
+						}
+
+						if profile.minBatteryLevel <= 0 {
 							return
 						}
 
