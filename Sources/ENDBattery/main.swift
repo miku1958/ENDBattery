@@ -14,19 +14,19 @@ let configs: [Config] = [
 		analyzedBattery: .purple,
 
 		/// 你屏幕上显示的总功率需求
-		baseRequiredPower: 4985
+		baseRequiredPower: 5060
 	),
 
 	Config(
 		name: "武陵",
 		/// 固定消耗的电池: .originium, .green, .blue, .purple, .lowEarth
-		staticBattery: .lowEarth,
+		staticBattery: .originium,
 
 		/// 需要分流的电池: .originium, .green, .blue, .purple, .lowEarth
-		analyzedBattery: .lowEarth,
+		analyzedBattery: .midEarth,
 
 		/// 你屏幕上显示的总功率需求
-		baseRequiredPower: 1720
+		baseRequiredPower: 2500
 	),
 ]
 
@@ -97,6 +97,7 @@ struct Config {
 		case blue
 		case purple
 		case lowEarth
+		case midEarth
 
 		var name: String {
 			switch self {
@@ -110,6 +111,8 @@ struct Config {
 				return "紫电池"
 			case .lowEarth:
 				return "低容息壤电池"
+			case .midEarth:
+				return "中容息壤电池"
 			}
 		}
 
@@ -125,6 +128,8 @@ struct Config {
 				return 1100
 			case .lowEarth:
 				return 1600
+			case .midEarth:
+				return 3200
 			}
 		}
 
@@ -132,7 +137,7 @@ struct Config {
 			switch self {
 			case .originium:
 				return 8
-			case .green, .blue, .purple, .lowEarth:
+			case .green, .blue, .purple, .lowEarth, .midEarth:
 				return 40
 			}
 		}
