@@ -8,10 +8,10 @@ let configs: [Config] = [
 	Config(
 		name: "4号谷地",
 		/// 固定消耗的电池: .originium, .green, .blue, .purple, .lowEarth
-		staticBattery: .purple,
+		staticBattery: .purple(),
 
 		/// 需要分流的电池: .originium, .green, .blue, .purple, .lowEarth
-		analyzedBattery: .purple,
+		analyzedBattery: .purple(),
 
 		/// 你屏幕上显示的总功率需求
 		baseRequiredPower: 5060
@@ -20,13 +20,13 @@ let configs: [Config] = [
 	Config(
 		name: "武陵",
 		/// 固定消耗的电池: .originium, .green, .blue, .purple, .lowEarth
-		staticBattery: .originium,
+		staticBattery: .originium(count: 6),
 
 		/// 需要分流的电池: .originium, .green, .blue, .purple, .lowEarth
-		analyzedBattery: .midEarth,
+		analyzedBattery: .midEarth(),
 
 		/// 你屏幕上显示的总功率需求
-		baseRequiredPower: 2500
+		baseRequiredPower: 2800,
 	),
 ]
 
@@ -92,12 +92,12 @@ struct Config {
 	/// Belt speed: 2s/grid.
 
 	enum Battery {
-		case originium
-		case green
-		case blue
-		case purple
-		case lowEarth
-		case midEarth
+		case originium(count: Int? = nil)
+		case green(count: Int? = nil)
+		case blue(count: Int? = nil)
+		case purple(count: Int? = nil)
+		case lowEarth(count: Int? = nil)
+		case midEarth(count: Int? = nil)
 
 		var name: String {
 			switch self {
@@ -144,6 +144,13 @@ struct Config {
 
 		var totalEnergy: Double {
 			power * life
+		}
+
+		var count: Int? {
+			switch self {
+			case .originium(let count), .green(let count), .blue(let count), .purple(let count), .lowEarth(let count), .midEarth(let count):
+				return count
+			}
 		}
 	}
 
@@ -1197,9 +1204,16 @@ for config in configs {
 		let totalPower = currentBaseRequiredPower - 200
 
 		// Number of batteries to split
-		var analyzedBatteryCount: Int = Int(ceil(totalPower / battery.power))
-
-		let stopAtCount = max(1, min(minAnalyzedBatteryCount, analyzedBatteryCount))
+		var analyzedBatteryCount: Int
+		let stopAtCount: Int
+		if let fixedStaticCount = batteryStatic.count {
+			let remainingPower = totalPower - Double(fixedStaticCount) * batteryStatic.power
+			analyzedBatteryCount = Int(ceil(remainingPower / battery.power))
+			stopAtCount = analyzedBatteryCount
+		} else {
+			analyzedBatteryCount = Int(ceil(totalPower / battery.power))
+			stopAtCount = max(1, min(minAnalyzedBatteryCount, analyzedBatteryCount))
+		}
 
 		var solutions: [[Int: Int]: [Solution?]] = [:]
 		var allKeptSolutions: [Solution] = []
@@ -1208,10 +1222,15 @@ for config in configs {
 			defer {
 				analyzedBatteryCount -= 1
 			}
-			let maxAnalyzedBatteryDesignPower = battery.power * Double(analyzedBatteryCount)
-			let maxAnalyzedBatteryPower = min(totalPower, maxAnalyzedBatteryDesignPower)
-			let staticBatteryCount = Int(
-				ceil((totalPower - maxAnalyzedBatteryPower) / batteryStatic.power))
+			let staticBatteryCount: Int
+			if let fixedCount = batteryStatic.count {
+				staticBatteryCount = fixedCount
+			} else {
+				let maxAnalyzedBatteryDesignPower = battery.power * Double(analyzedBatteryCount)
+				let maxAnalyzedBatteryPower = min(totalPower, maxAnalyzedBatteryDesignPower)
+				staticBatteryCount = Int(
+					ceil((totalPower - maxAnalyzedBatteryPower) / batteryStatic.power))
+			}
 			let requiredPower: Double =
 				totalPower - Double(staticBatteryCount) * batteryStatic.power
 
