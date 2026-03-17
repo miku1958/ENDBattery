@@ -47,7 +47,7 @@ let maxDepthLimit: Int = 9
 var showTopSolutions: Int = 1
 
 /// 允许最小差值, 这个值越小越接近理论最优, 但是会下线后因为鹰角的服务器优化而导致计算不正确, 如果出现这种情况可以适当调大这个值到10以上
-var allowedMinDiff: Double = 1
+var allowedMinDiff: Double = 10
 
 /// 是否允许使用三分流（增加搜索空间和时间, 但可能找到更优解）
 let enableThree: Bool = true
@@ -63,7 +63,7 @@ let maxStopToOutageSeconds: Double? = nil
 /// 允许的最大缺电时间（秒）
 /// 缺电定义：当前发电机总功率 < 需求功率，导致开始消耗核心电量。
 /// 缺电结束：发电机总功率 >= 需求功率，且此次充电过程能将核心电量充满。
-let maxShortageDurationLimitInSecond: Double = 1000
+let maxShortageDurationLimitInSecond: Double = 40
 
 /// 保留所有结果并在最后对所有结果进行测试
 /// 关闭时会提前过滤掉一些方案以减少最后测试的压力, 但也足够准确了.
