@@ -72,3 +72,8 @@ battery_opt
 
 # Local build/verify logs and scratch downloads (workspace-scoped, not committed)
 /logs/
+/.scratch/
+
+# npm: the browser_wasi_shim used by the web loader is vendored under vendor/,
+# so no node_modules is committed; ignore any local install.
+node_modules/

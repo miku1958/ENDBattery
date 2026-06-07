@@ -66,9 +66,18 @@ swift run -c release --swift-sdk swift-6.3.2-RELEASE_wasm
 
 产出位于 `.build/wasm32-unknown-wasip1/release/ENDBattery.wasm`(交叉编译产物在 target-triple 子目录下,不是 `.build/release/`)。
 
-### 3. 浏览器侧 loader
+### 3. 浏览器侧 loader(已完成,已实测)
 
-用 WASI polyfill 加载 `.wasm`,把模块写到 stdout 的字节流捕获后渲染到页面。SwiftWasm 生态标准选型是 `@bjorn3/browser_wasi_shim`:构造带 stdout 捕获的 WASI 实例 → `WebAssembly.instantiate` → 调用 `_start` → 收集 stdout。具体 JS API 在实现阶段对照其 README 核对,不凭记忆写。
+`@bjorn3/browser_wasi_shim` v0.4.2 **vendor 进仓库** `vendor/browser_wasi_shim/`(整个 `dist/*.js` + `LICENSE-MIT`),不走 CDN:静态站自包含、无 JS 构建步、浏览器与 Node smoke test 用同一份。更新办法见该目录 `README.md`。
+
+`loader.js`(仓库根)导出 `runWasm(wasmModule, stdinJson) -> {stdout, stderr, exitCode}`,已核对 shim 源码的实测要点:
+
+- fd 数组:`[ new OpenFile(new File(stdinBytes, {readonly:true})), new ConsoleStdout(b=>stdoutChunks.push(b)), new ConsoleStdout(b=>stderrChunks.push(b)) ]` —— fd0 stdin、fd1/fd2 各收**原始字节**(`ConsoleStdout` 回调拿到的是已脱离 wasm 内存的 slice 拷贝),全部跑完再 `TextDecoder` 一次解码,避免 `lineBuffered` 拆多字节 UTF-8。
+- **坑(必踩)**:`new WASI(args, env, fds, { debug: false })` 第四参不能省。shim 的 `WASI` 构造里 `debug.enable(options.debug)`,而 `enable(undefined)` 被当成"开",会每次 WASI 调用都 `console.log` 刷屏;必须显式 `{debug:false}`。
+- 传**已编译的 `WebAssembly.Module`**(非字节)给 `WebAssembly.instantiate`,它直接 resolve 出 `Instance`;再 `wasi.start(instance)`(内部 `_start()`,捕获 `WASIProcExit` 返回退出码,Swift 正常退出码 0)。
+- 浏览器侧编译:`await WebAssembly.compileStreaming(fetch('ENDBattery.wasm'))`;Node 侧:`WebAssembly.compile(await readFile(path))`。
+
+验证用 `test/loader-smoke.mjs`(`node test/loader-smoke.mjs`):无浏览器时用同一 loader + vendored shim 在 Node 跑 wasm,合并两 config 输出去掉计时行后与 `logs/baseline-current-output.txt` 字节一致、单 config 命中 `swift test` 断言行。需先本地交叉编译出 `.wasm`(产物不进 git)。
 
 ### 4. 输入重构(已完成)
 
