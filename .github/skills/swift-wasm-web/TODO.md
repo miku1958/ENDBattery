@@ -7,6 +7,10 @@
 已确认设计:
 - 交互式方案(非"只跑固定配置"):网页表单提供电池类型、`baseRequiredPower` 及选填项,计算结果显示在页面上。
 - 因此需要重构 `Sources/ENDBattery/main.swift`,把硬编码 `configs` 改为从输入读取,WASM 端解析;保留原 CLI 用法。
+- 输入传递:**stdin 喂一段 JSON**,Swift 端解码(对应 question 选项 B)。
+- 页面位置:仓库**根目录**(html/js 源文件放根目录)。
+- config 存储:浏览器 **localStorage** 保存;网页 UI 支持保存 / 切换多个 config(用户可建多个命名配置并切换)。
+- `.wasm` 上线方式(question 问题 2)仍待最终确认,见 `question.md`。
 
 ## 待办(按执行顺序)
 

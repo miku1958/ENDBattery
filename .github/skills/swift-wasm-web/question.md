@@ -1,21 +1,14 @@
 # question — swift-wasm-web
 
-实现前需要你拍板的设计分叉(高层"交互式网页"方向已确认):
+已确认(已并入 `TODO.md`):输入用 stdin JSON;页面放仓库根目录;config 存 localStorage 且网页可切换多个 config。
 
-1. **输入传递方式**:WASM 端怎么收参数?
-   - 选项 A:命令行参数(WASI `args`),网页拼成 argv。
-   - 选项 B:stdin 喂一段 JSON,Swift 端解码。
-   - 建议:B(参数多、结构化,扩展性好)。
+## 唯一待最终确认:`.wasm` 怎么上线
 
-2. **`.wasm` 怎么上线**:
-   - 选项 A:把构建好的 `.wasm` 直接提交进仓库(简单,但二进制进 git)。
-   - 选项 B:用 GitHub Actions 构建后发布到 Pages(仓库干净,但要配 CI)。
-   - 建议:A(项目小,先跑通)。
+你想要"每次自动更新"。澄清:网页**不能**直接从 GitHub Actions artifact 下载(URL 不公开、需认证、会过期)。可行的等价做法是 Actions 构建后**部署到 Pages**。两条路二选一:
 
-3. **页面放哪 / Pages 来源**:`docs/` 目录(main 分支)还是单独 `gh-pages` 分支?
-   - 建议:`docs/`(改动和源码同分支,review 方便)。
+- 选项 A:本地装 wasm SDK 编译,把 `.wasm` 手动提交进仓库根目录,Pages 从 main 根目录服务。简单,但二进制进 git、每次改 Swift 要本地重编再提交。
+- 选项 B(**推荐,匹配"自动更新"**):写一个 GitHub Actions workflow,push Swift 改动后 CI 自动编译 `.wasm` 并部署到 Pages(Pages source 设为 "GitHub Actions")。本地不用装 wasm SDK,`.wasm` 不进 git,网页永远是最新。代价是首次配 workflow + CI 每次构建较慢。
 
-4. **网页计算范围**:CLI 现在一次跑多个 config(`4号谷地`、`武陵`…)。网页是单个 config 算一次,还是保留批量?
-   - 建议:单 config 算一次(交互式更直观)。
+html/js 源文件两种方案都放仓库根目录,不受影响。
 
-回答后我会把决定整理进 `TODO.md` 并开始实现。
+回答 A 还是 B 后即可开始实现。
