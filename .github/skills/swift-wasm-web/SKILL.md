@@ -23,19 +23,27 @@ description: 把 ENDBattery (Swift SPM CLI) 交叉编译成 WebAssembly/WASI 并
 ## 关键事实(已核对 swift.org 官方 WASM 文档)
 
 - 系统 Xcode 自带的 Swift **不含** wasm Swift SDK;必须用 swiftly 装独立 toolchain,且 SDK 版本要和 toolchain **精确匹配**。
-- 本项目依赖 Foundation(`Date`、`String(format:)`)→ 必须用**完整版** wasm SDK(ID 形如 `swift-<ver>-RELEASE_wasm`),**不要**用 `-embedded` 那个(子集,不含完整 Foundation)。
+- 本项目依赖 Foundation(`Date`、`String(format:)`)→ 必须用**完整版** wasm SDK(ID 形如 `swift-<ver>-RELEASE_wasm`),**不要**用 `-embedded` 那个(子集,不含完整 Foundation)。已实测:完整版 SDK 下 `Date`/`String(format:)` 的**编译与 WasmKit 运行均正常**,当前未改动代码可直接交叉编译并跑出正确结果。
 - 当前 `Sources/ENDBattery/main.swift` 无线程 / 文件 / 网络 / `readLine` / 并发,对 WASI 友好;但 `configs` 是硬编码的,要做成交互式网页必须改为从输入读取。
 - 本项目不用 SharedArrayBuffer / 线程 → 浏览器侧**不需要** COOP/COEP 响应头,GitHub Pages 默认即可运行。
 
 ## Procedure
 
-### 1. 装 toolchain + wasm SDK
+### 1. 装 swiftly 本体 + toolchain + wasm SDK
 
 ```bash
-swiftly install 6.3.2 && swiftly use 6.3.2
+# a. 装 swiftly 本体(若 `swiftly` 不存在):macOS 官方 pkg 装进用户目录,不需 sudo
+curl -fSL -o swiftly.pkg https://download.swift.org/swiftly/darwin/swiftly.pkg
+installer -pkg swiftly.pkg -target CurrentUserHomeDirectory
+~/.swiftly/bin/swiftly init --no-modify-profile --skip-install --assume-yes --quiet-shell-followup
+# --no-modify-profile 不动用户 shell profile;之后每个 shell 先激活再用 swift:
+. ~/.swiftly/env.sh && hash -r
+
+# b. 装 toolchain + wasm SDK
+swiftly install 6.3.2 --assume-yes   # 装完自动设为 default,无需再 swiftly use
 swift sdk install https://download.swift.org/swift-6.3.2-release/wasm-sdk/swift-6.3.2-RELEASE/swift-6.3.2-RELEASE_wasm.artifactbundle.tar.gz \
   --checksum a61f0584c93283589f8b2f42db05c1f9a182b506c2957271402992655591dd7c
-swift sdk list   # 记下完整版 ID: swift-6.3.2-RELEASE_wasm
+swift sdk list   # 完整版 ID: swift-6.3.2-RELEASE_wasm(另列出 -embedded 子集版,本项目不用)
 ```
 
 > 版本号会随官方更新变化;实际安装前先到官方文档确认当前推荐版本与对应 checksum,见 References。
@@ -48,7 +56,7 @@ swift build -c release --swift-sdk swift-6.3.2-RELEASE_wasm
 swift run -c release --swift-sdk swift-6.3.2-RELEASE_wasm
 ```
 
-产出位于 `.build/release/ENDBattery.wasm`。
+产出位于 `.build/wasm32-unknown-wasip1/release/ENDBattery.wasm`(交叉编译产物在 target-triple 子目录下,不是 `.build/release/`)。
 
 ### 3. 浏览器侧 loader
 

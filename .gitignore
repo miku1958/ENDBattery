@@ -69,3 +69,6 @@ DerivedData/
 .netrc
 .vscode/settings.json
 battery_opt
+
+# Local build/verify logs and scratch downloads (workspace-scoped, not committed)
+/logs/
