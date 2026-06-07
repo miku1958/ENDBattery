@@ -8,25 +8,25 @@ let configs: [Config] = [
 	Config(
 		name: "4号谷地",
 		/// 固定消耗的电池: .originium, .green, .blue, .purple, .lowEarth
-		staticBattery: .purple(),
+		staticBattery: [.purple()],
 
 		/// 需要分流的电池: .originium, .green, .blue, .purple, .lowEarth
 		analyzedBattery: .purple(),
 
 		/// 你屏幕上显示的总功率需求
-		baseRequiredPower: 5060
+		baseRequiredPower: 5230
 	),
 
 	Config(
 		name: "武陵",
 		/// 固定消耗的电池: .originium, .green, .blue, .purple, .lowEarth
-		staticBattery: .originium(count: 6),
+		staticBattery: [.midEarth(count: 1)],
 
 		/// 需要分流的电池: .originium, .green, .blue, .purple, .lowEarth
-		analyzedBattery: .midEarth(),
+		analyzedBattery: .purple(),
 
 		/// 你屏幕上显示的总功率需求
-		baseRequiredPower: 2800,
+		baseRequiredPower: 6210,
 	),
 ]
 
@@ -154,7 +154,7 @@ struct Config {
 		}
 	}
 
-	let staticBattery: Battery
+	let staticBattery: [Battery]
 	let analyzedBattery: Battery
 	let baseRequiredPower: Double
 }
@@ -344,7 +344,7 @@ class Solution {
 	let actualBatteryCount: Int
 	let requiredPower: Double
 	let analyzedBatteryCount: Int
-	let staticBatteryCount: Int
+	let batteryCountSummary: String
 	let depthLimit: Int
 	let stopToOutageSeconds: Double
 	let requiredStopIntervalSeconds: Double
@@ -352,7 +352,7 @@ class Solution {
 	init(
 		finalC: Double, entropy: Double, preSplitBits: [Int: Int], steps: [Step],
 		splitValues: [Double], diff: Double, overlap: OverlapProfile, actualBatteryCount: Int,
-		requiredPower: Double, analyzedBatteryCount: Int, staticBatteryCount: Int, depthLimit: Int,
+		requiredPower: Double, analyzedBatteryCount: Int, batteryCountSummary: String, depthLimit: Int,
 		stopToOutageSeconds: Double, requiredStopIntervalSeconds: Double
 	) {
 		self.finalC = finalC
@@ -365,7 +365,7 @@ class Solution {
 		self.actualBatteryCount = actualBatteryCount
 		self.requiredPower = requiredPower
 		self.analyzedBatteryCount = analyzedBatteryCount
-		self.staticBatteryCount = staticBatteryCount
+		self.batteryCountSummary = batteryCountSummary
 		self.depthLimit = depthLimit
 		self.stopToOutageSeconds = stopToOutageSeconds
 		self.requiredStopIntervalSeconds = requiredStopIntervalSeconds
@@ -1100,7 +1100,6 @@ func findWorstCaseOverlapStats(
 func analyzeSolutionOverlap(
 	_ solution: Solution,
 	battery: Config.Battery,
-	batteryStatic: Config.Battery,
 	worstCaseStats stats: OverlapStats
 ) {
 
@@ -1113,7 +1112,7 @@ func analyzeSolutionOverlap(
 	let possibleSavePerDayGlob = baselineBatteriesPerDayGlob - requiredBatteriesPerDayGlob
 
 	print(
-		"\n\t📦 电池数量:　\(batteryStatic.name): \(solution.staticBatteryCount)个, \(battery.name): \(solution.actualBatteryCount)个"
+		"\n\t📦 电池数量:　\(solution.batteryCountSummary)"
 	)
 	print(
 		"\t📉 基准消耗:　\(String(format: "%.3f", baselineBatteriesPerDayGlob)) 颗/天 (\(solution.actualBatteryCount)发电机常开)"
@@ -1194,8 +1193,25 @@ for config in configs {
 	print("\n--------------------------------------------------")
 	print("🔍 正在搜索:　\(config.name)")
 
-	let batteryStatic = config.staticBattery
 	let battery = config.analyzedBattery
+
+	// Fixed batteries of a different type than the analyzed battery contribute a
+	// constant base power. An explicit entry matching the analyzed battery type acts
+	// as a floor for the always-on (non-split) analyzed generators.
+	var fixedBasePower: Double = 0
+	var fixedBaseSummaryParts: [String] = []
+	var analyzedStaticFloor: Int = 0
+	for entry in config.staticBattery {
+		if entry.name == battery.name {
+			analyzedStaticFloor += entry.count ?? 0
+		} else {
+			let entryCount = entry.count ?? 0
+			fixedBasePower += entry.power * Double(entryCount)
+			if entryCount > 0 {
+				fixedBaseSummaryParts.append("\(entry.name): \(entryCount)个")
+			}
+		}
+	}
 
 	var currentBaseRequiredPower = config.baseRequiredPower
 	// Loop to automatically increase power if no solution satisfies constraints
@@ -1203,17 +1219,14 @@ for config in configs {
 		// Total required power (minus 200W core base)
 		let totalPower = currentBaseRequiredPower - 200
 
-		// Number of batteries to split
-		var analyzedBatteryCount: Int
-		let stopAtCount: Int
-		if let fixedStaticCount = batteryStatic.count {
-			let remainingPower = totalPower - Double(fixedStaticCount) * batteryStatic.power
-			analyzedBatteryCount = Int(ceil(remainingPower / battery.power))
-			stopAtCount = analyzedBatteryCount
-		} else {
-			analyzedBatteryCount = Int(ceil(totalPower / battery.power))
-			stopAtCount = max(1, min(minAnalyzedBatteryCount, analyzedBatteryCount))
-		}
+		// Power the analyzed-type generators (always-on + split) must cover.
+		let netPower = totalPower - fixedBasePower
+
+		// Enumerate the split-generator count. Cap the max so the auto-derived
+		// always-on analyzed count is at least analyzedStaticFloor.
+		let baseAnalyzedMax = max(1, Int(ceil(netPower / battery.power)))
+		var analyzedBatteryCount = max(1, baseAnalyzedMax - analyzedStaticFloor)
+		let stopAtCount = max(1, min(minAnalyzedBatteryCount, analyzedBatteryCount))
 
 		var solutions: [[Int: Int]: [Solution?]] = [:]
 		var allKeptSolutions: [Solution] = []
@@ -1222,19 +1235,25 @@ for config in configs {
 			defer {
 				analyzedBatteryCount -= 1
 			}
-			let staticBatteryCount: Int
-			if let fixedCount = batteryStatic.count {
-				staticBatteryCount = fixedCount
-			} else {
-				let maxAnalyzedBatteryDesignPower = battery.power * Double(analyzedBatteryCount)
-				let maxAnalyzedBatteryPower = min(totalPower, maxAnalyzedBatteryDesignPower)
-				staticBatteryCount = Int(
-					ceil((totalPower - maxAnalyzedBatteryPower) / batteryStatic.power))
-			}
+			let maxAnalyzedBatteryDesignPower = battery.power * Double(analyzedBatteryCount)
+			let maxAnalyzedBatteryPower = min(netPower, maxAnalyzedBatteryDesignPower)
+			let staticBatteryCount = Int(
+				ceil((netPower - maxAnalyzedBatteryPower) / battery.power))
 			let requiredPower: Double =
-				totalPower - Double(staticBatteryCount) * batteryStatic.power
+				netPower - Double(staticBatteryCount) * battery.power
+
+			guard requiredPower > 0 else {
+				continue
+			}
 
 			let actualBatteryCount = Int(ceil(requiredPower / battery.power))
+
+			var batteryCountSummaryParts = fixedBaseSummaryParts
+			if staticBatteryCount > 0 {
+				batteryCountSummaryParts.append("\(battery.name)(常开): \(staticBatteryCount)个")
+			}
+			batteryCountSummaryParts.append("\(battery.name)(分流): \(actualBatteryCount)个")
+			let batteryCountSummary = batteryCountSummaryParts.joined(separator: ", ")
 
 			// --- Derived vars ---
 
@@ -1371,7 +1390,7 @@ for config in configs {
 							actualBatteryCount: actualBatteryCount,
 							requiredPower: requiredPower,
 							analyzedBatteryCount: analyzedBatteryCount,
-							staticBatteryCount: staticBatteryCount,
+							batteryCountSummary: batteryCountSummary,
 							depthLimit: depthLimit,
 							stopToOutageSeconds: stopToOutageSeconds,
 							requiredStopIntervalSeconds: requiredStopInterval
@@ -1510,6 +1529,10 @@ for config in configs {
 		}
 
 		guard !validatedTops.isEmpty else {
+			guard currentBaseRequiredPower < config.baseRequiredPower + 10000 else {
+				print("\t❌ 当前需求功率 \(currentBaseRequiredPower) 已达到自动增加上限 (原需求 +10000), 放弃搜索.\n")
+				break
+			}
 			print("\t❌ 当前需求功率 \(currentBaseRequiredPower) 未找到符合条件的方案, 自动增加 5 功率重试...\n")
 			currentBaseRequiredPower += 5
 			continue
@@ -1528,7 +1551,6 @@ for config in configs {
 			analyzeSolutionOverlap(
 				sol,
 				battery: battery,
-				batteryStatic: batteryStatic,
 				worstCaseStats: worstStats
 			)
 		}
