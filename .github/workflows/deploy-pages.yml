@@ -6,8 +6,10 @@
 # GitHub Pages serves application/wasm with gzip/brotli, so the wire transfer is
 # a fraction of that and well under the per-file limit.
 #
-# Pages source must be set to "GitHub Actions" once in repo Settings -> Pages
-# (configure-pages below also attempts to enable it automatically).
+# Pages must be enabled once with source "GitHub Actions" before this can deploy:
+# repo Settings -> Pages, or `gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow`.
+# configure-pages below only reads the existing site; its enablement input can't use
+# the default GITHUB_TOKEN, so it does not bootstrap Pages on its own.
 name: Deploy web (WASM) to GitHub Pages
 
 on:
