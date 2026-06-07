@@ -1,0 +1,74 @@
+# Build ENDBattery to WebAssembly and publish the static page to GitHub Pages.
+#
+# The .wasm is never committed (see .gitignore); this workflow rebuilds it from
+# the Swift sources on every push to main and bundles it next to index.html, so
+# the live site always matches the code. The product is ~60MB uncompressed but
+# GitHub Pages serves application/wasm with gzip/brotli, so the wire transfer is
+# a fraction of that and well under the per-file limit.
+#
+# Pages source must be set to "GitHub Actions" once in repo Settings -> Pages
+# (configure-pages below also attempts to enable it automatically).
+name: Deploy web (WASM) to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let an in-progress deploy finish rather than cancelling it; queue the next one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Official Swift 6.3.2 toolchain image; its version matches the wasm SDK
+    # installed below exactly (the SDK must match the toolchain version).
+    container:
+      image: swift:6.3.2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install wasm Swift SDK
+        run: |
+          swift sdk install \
+            https://download.swift.org/swift-6.3.2-release/wasm-sdk/swift-6.3.2-RELEASE/swift-6.3.2-RELEASE_wasm.artifactbundle.tar.gz \
+            --checksum a61f0584c93283589f8b2f42db05c1f9a182b506c2957271402992655591dd7c
+
+      - name: Cross-compile ENDBattery.wasm
+        run: |
+          swift build -c release --swift-sdk swift-6.3.2-RELEASE_wasm --product ENDBattery
+
+      - name: Assemble static site
+        run: |
+          mkdir -p _site
+          cp index.html app.js loader.js _site/
+          cp -R vendor _site/vendor
+          cp .build/wasm32-unknown-wasip1/release/ENDBattery.wasm _site/ENDBattery.wasm
+          ls -lh _site _site/vendor
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

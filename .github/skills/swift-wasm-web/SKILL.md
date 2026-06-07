@@ -114,7 +114,18 @@ swift run -c release --swift-sdk swift-6.3.2-RELEASE_wasm
 
 ### 5. 部署(GitHub Actions → Pages)
 
-html/js 静态源文件放仓库**根目录**(已落地:`index.html`、`app.js`、`loader.js`、`vendor/`)。`.wasm` **不进 git**(根目录的 `ENDBattery.wasm` 也已加进 `.gitignore`):写一个 GitHub Actions workflow,装 swiftly + wasm SDK → `swift build -c release --swift-sdk <id>` → 把 `.wasm` 复制到根并与静态资源打包 → 部署到 Pages。仓库 Settings 里 Pages source 设为 "GitHub Actions"。push Swift 改动后 CI 自动重编重部,网页永远是最新。
+workflow:`.github/workflows/deploy-pages.yml`,两个 job:
+
+- `build`(`container: swift:6.3.2`):用**官方 Swift 发布镜像**而非在 CI 里现装 swiftly —— toolchain 预装,镜像 tag 必须与下面装的 wasm SDK **版本精确一致**(`swift:6.3.2` ↔ `swift-6.3.2-RELEASE_wasm`)。步骤:`swift sdk install <与本地同一 URL+checksum>` → `swift build -c release --swift-sdk swift-6.3.2-RELEASE_wasm --product ENDBattery` → 把 `index.html`/`app.js`/`loader.js`/`vendor/` 和产物 `.build/wasm32-unknown-wasip1/release/ENDBattery.wasm` 拷进 `_site/` → `actions/upload-pages-artifact@v3`。
+- `deploy`(`runs-on: ubuntu-latest`):`actions/configure-pages@v5`(会尝试自动 enable Pages,source=workflow)+ `actions/deploy-pages@v4`;顶层 `permissions: pages: write` + `id-token: write`。
+
+要点 / 坑:
+
+- **容器 job 不需要镜像自带 node**:GitHub 把 runner 的 node 注入容器(`/__e/node20`),`checkout`/`upload-pages-artifact` 等 JS action 照常跑;swift 镜像(Debian/Ubuntu)自带 `tar`/`gzip`/`cp`,assemble 与打包够用。
+- wasm 产物 triple 子目录 `wasm32-unknown-wasip1` 由 SDK 决定、与 host 架构无关,Linux amd64 runner 上路径同 mac。
+- **尺寸**:wasm 约 58MB(完整 Foundation,未瘦身)< Pages 单文件 100MB 限;Pages/Fastly 对 `application/wasm` 自动 gzip/br,裸传只剩零头,首版无需瘦身。要再压缩可在 build job 加 binaryen 跑 `wasm-opt -Os`,属增量,非必需。
+- `.wasm` **不进 git**(`/ENDBattery.wasm` 在 `.gitignore`),CI 每次 push 重编重放,网页永远最新。
+- 仓库 Settings → Pages 的 source 设为 "GitHub Actions" 是一次性前置(`configure-pages` 通常能自动 enable;否则手动设,或 `gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow`)。
 
 ## Validation
 
