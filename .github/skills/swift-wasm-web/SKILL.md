@@ -51,15 +51,16 @@ swift run -c release --swift-sdk swift-6.3.2-RELEASE_wasm
 
 ### 4. 输入重构
 
-把硬编码 `configs` 改为从输入读取(命令行参数 / stdin / 环境变量,schema 见 `question.md` 待定项),网页表单据此拼参数。保留原 CLI 用法不破坏。
+把硬编码 `configs` 改为从 **stdin JSON** 读取,Swift 端解码,网页表单据此拼 JSON。保留原 CLI 用法不破坏。config 在浏览器用 localStorage 保存,UI 可建 / 切换多个命名 config。
 
-### 5. 部署
+### 5. 部署(GitHub Actions → Pages)
 
-静态资源(`.wasm` + `.html` + `.js`)放仓库内目录(`docs/` 或 `gh-pages`,见 `question.md`),开 GitHub Pages。`.wasm` 是构建产物:要么提交,要么用 GitHub Actions 构建后发布(见 `question.md` 决策)。
+html/js 静态源文件放仓库**根目录**。`.wasm` **不进 git**:写一个 GitHub Actions workflow,装 swiftly + wasm SDK → `swift build -c release --swift-sdk <id>` → 把 `.wasm` 与静态资源打包 → 部署到 Pages。仓库 Settings 里 Pages source 设为 "GitHub Actions"。push Swift 改动后 CI 自动重编重部,网页永远是最新。
 
 ## Validation
 
 - 本地起静态服务器(如 `python3 -m http.server`)打开页面,填一组参数,确认输出与 `swift run -c release` 跑同参数的 CLI 输出一致。
+- push 后确认 Actions 构建成功、Pages 站点可访问。
 - 浏览器 DevTools Network 确认 `.wasm` 以 `application/wasm` 返回、无 404。
 
 ## Constraints / Safety
