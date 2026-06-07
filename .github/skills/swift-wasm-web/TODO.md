@@ -28,8 +28,8 @@ swift run   -c release --swift-sdk swift-6.3.2-RELEASE_wasm        # WasmKit 本
 
 ## 待办(按执行顺序)
 
-1. 拆分 Package:计算逻辑 → library target;`ENDBattery` executable 改为从 **stdin JSON** 读取 → 调用 library → print;新增 test target,把硬编码 `4号谷地`/`武陵` 场景迁为测试用例。移除产品级 CLI 用途。
-2. 浏览器侧 loader:用 `@bjorn3/browser_wasi_shim` 加载 `.wasm`、喂 stdin JSON、捕获 stdout。
+1. ✅ 已完成。拆出 `ENDBatteryCore` library(`Calculator.swift` + `Input.swift`)、`ENDBattery` executable(stdin JSON → `runCalculation` → print)、`ENDBatteryCoreTests`(`4号谷地`/`武陵` + 默认值场景,dup2 捕获 stdout 断言)。`swift test` 3 通过;host 与 WASM(WasmKit 喂 stdin)输出对照 `logs/baseline-current-output.txt` 字节一致。JSON schema、target 布局、WASI stdin 实测见 [SKILL.md](SKILL.md)。
+2. **← 当前**。浏览器侧 loader:用 `@bjorn3/browser_wasi_shim` 加载 `.wasm`、喂 stdin JSON、捕获 stdout。`.wasm` 产物在 `.build/wasm32-unknown-wasip1/release/ENDBattery.wasm`(本地交叉编译命令见本文件「本地环境」)。
 3. HTML 表单(电池类型、`baseRequiredPower`、各选填项)+ 结果展示区 + localStorage 多 config 保存 / 切换 UI。
 4. 部署:html/js 放仓库根目录;写 GitHub Actions workflow(装 swiftly + wasm SDK → build → 打包 `.wasm` + 静态资源 → 部署 Pages);仓库设置里把 Pages source 改为 "GitHub Actions"。
 5. 端到端验证:`swift test` 跑通已迁移场景;本地静态服务器跑通网页,确认输出与对应测试场景一致;推送后确认 Actions 部署成功、Pages 站点可访问。

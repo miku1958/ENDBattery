@@ -20,11 +20,19 @@ description: 把 ENDBattery (Swift SPM CLI) 交叉编译成 WebAssembly/WASI 并
 - 产品入口只有 HTML/WASM,不保留产品级 CLI。计算逻辑抽成可被测试 import 的 library target;`ENDBattery` executable 只做 WASM 入口(stdin JSON → 计算 → print)。
 - 本地验证与 debug 走 `swift test`;原硬编码 `4号谷地`/`武陵` 场景迁为测试用例。
 
+### 已落地的 target 布局(Package.swift 三 target)
+
+- `Sources/ENDBatteryCore/`(library):`Calculator.swift` 装搜索 / 模拟逻辑 + `public func runCalculation(input:)`;`Input.swift` 装 `public struct CalculatorInput: Decodable` + `Config`/`Config.Battery` 的 Decodable + `applyOptions(_:)`。
+- `Sources/ENDBattery/main.swift`(executable,依赖 ENDBatteryCore):读 stdin → `JSONDecoder().decode(CalculatorInput.self,...)` → `runCalculation(input:)` → print;计时留在这里(库不碰 `Date()`,保证输出确定性)。
+- `Tests/ENDBatteryCoreTests/`:`4号谷地`/`武陵` + 默认值场景,用 dup2 捕获 stdout 后断言关键行(对照 `logs/baseline-current-output.txt` 基线)。
+- 原硬编码 `configs` 全局 + 各 `选填` 全局保留为 `ENDBatteryCore` 模块级 `var`,`applyOptions` 每次运行从输入覆盖。之所以走模块级 `var` 而非把参数穿进每个函数:`maxShortageDurationLimitInSecond`/`safetyThreshold`/`coreMaxCapacity` 被 `OverlapProfile.<`(`Comparable` 静态方法,签名固定)引用,无法以参数注入,模块级状态是对原 file-level 全局最忠实的翻译。
+
 ## 关键事实(已核对 swift.org 官方 WASM 文档)
 
 - 系统 Xcode 自带的 Swift **不含** wasm Swift SDK;必须用 swiftly 装独立 toolchain,且 SDK 版本要和 toolchain **精确匹配**。
 - 本项目依赖 Foundation(`Date`、`String(format:)`)→ 必须用**完整版** wasm SDK(ID 形如 `swift-<ver>-RELEASE_wasm`),**不要**用 `-embedded` 那个(子集,不含完整 Foundation)。已实测:完整版 SDK 下 `Date`/`String(format:)` 的**编译与 WasmKit 运行均正常**,当前未改动代码可直接交叉编译并跑出正确结果。
-- 当前 `Sources/ENDBattery/main.swift` 无线程 / 文件 / 网络 / `readLine` / 并发,对 WASI 友好;但 `configs` 是硬编码的,要做成交互式网页必须改为从输入读取。
+- 计算核心无线程 / 文件 / 网络 / `readLine` / 并发,对 WASI 友好。
+- **已实测**:`FileHandle.standardInput.readDataToEndOfFile()` + `JSONDecoder` 在 WASI/WasmKit 下可用 —— `echo '<json>' | swift run -c release --swift-sdk <id> ENDBattery` 端到端跑出与 host 字节一致的结果。即 stdin JSON 输入路径在 WASM 侧成立,浏览器侧只需 WASI 运行时把表单 JSON 喂进 stdin。
 - 本项目不用 SharedArrayBuffer / 线程 → 浏览器侧**不需要** COOP/COEP 响应头,GitHub Pages 默认即可运行。
 
 ## Procedure
@@ -62,9 +70,29 @@ swift run -c release --swift-sdk swift-6.3.2-RELEASE_wasm
 
 用 WASI polyfill 加载 `.wasm`,把模块写到 stdout 的字节流捕获后渲染到页面。SwiftWasm 生态标准选型是 `@bjorn3/browser_wasi_shim`:构造带 stdout 捕获的 WASI 实例 → `WebAssembly.instantiate` → 调用 `_start` → 收集 stdout。具体 JS API 在实现阶段对照其 README 核对,不凭记忆写。
 
-### 4. 输入重构
+### 4. 输入重构(已完成)
 
-拆出 library target 装计算逻辑;`ENDBattery` executable 改为从 **stdin JSON** 读取 → 调用 library → print,网页表单据此拼 JSON。**不保留产品级 CLI**;原硬编码 `4号谷地`/`武陵` 场景迁为 test target 用例,本地验证与 debug 走 `swift test`。config 在浏览器用 localStorage 保存,UI 可建 / 切换多个命名 config。
+库 / executable / test 三 target 已拆好(见上「已落地的 target 布局」)。stdin JSON schema:
+
+```json
+{
+  "configs": [
+    { "name": "武陵",
+      "staticBattery": [{ "type": "midEarth", "count": 1 }],
+      "analyzedBattery": { "type": "purple" },
+      "baseRequiredPower": 6210 }
+  ],
+  "minAnalyzedBatteryCount": 1, "extraBeltInSteps": 1, "maxDepthLimit": 9,
+  "showTopSolutions": 1, "allowedMinDiff": 10, "enableThree": true,
+  "safetyThreshold": 0.15, "maxStopToOutageSeconds": null,
+  "maxShortageDurationLimitInSecond": 1000, "keepAllSolutions": false
+}
+```
+
+- 电池统一表示 `{ "type": <originium|green|blue|purple|lowEarth|midEarth>, "count": <Int?> }`;`staticBattery` 省略默认 `[]`。
+- `configs` 是数组(网页一次算一条就传长度 1;test 借此一条一条迁场景)。
+- 除 `configs` 外所有字段在 JSON 里都可省略,缺省回落 `CalculatorInput.init(from:)` 里写死的默认值;网页表单的「选填项」直接 1:1 映射这些字段。
+- config 在浏览器用 localStorage 保存,UI 可建 / 切换多个命名 config(待办 #3)。
 
 ### 5. 部署(GitHub Actions → Pages)
 
