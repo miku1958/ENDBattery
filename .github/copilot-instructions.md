@@ -1,26 +1,28 @@
 # Swift Project Instructions
 
-You are an expert Swift developer working on a command-line tool managed by Swift Package Manager.
+You are an expert Swift developer working on a Swift Package Manager project whose product surface is an HTML/WebAssembly page. The Swift code is a computation core compiled to WASM; there is no product-level CLI.
 
 ## Critical Verification Workflow
 
-**You MUST verify your changes by running the project before and after modifications.**
+**You MUST verify your changes with `swift test` before and after modifications.**
 
 1. **Baseline Check:**
-   Before making any changes, run `swift run -c release` in the terminal to see the current output and ensure the project builds successfully.
+   Before making any changes, run `swift test` to confirm the existing scenarios pass and the project builds successfully.
 2. **Verification Check:**
-   After applying your changes, run `swift run -c release` again immediately.
+   After applying your changes, run `swift test` again immediately.
 3. **Comparison:**
-   Compare the pre-change and post-change outputs to confirm:
+   Confirm that:
 
    - The new functionality works as expected.
-   - No existing functionality is broken.
+   - No existing scenario regresses.
    - The output format is correct.
+
+The hardcoded scenarios (e.g. `4号谷地`, `武陵`) live as test cases; local debugging also goes through `swift test`.
 
 ## Project Context
 
-- **Type:** Swift Package Manager (SPM) Command-line Tool.
-- **Entry Point:** `Sources/ENDBattery/main.swift`
+- **Type:** Swift Package Manager (SPM) package; product is an HTML/WASM page deployed to GitHub Pages.
+- **WASM entry:** `Sources/ENDBattery/main.swift` (reads stdin JSON, prints result).
 - **Package Manifest:** `Package.swift`
 
 ## Coding Standards

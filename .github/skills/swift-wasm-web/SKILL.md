@@ -15,6 +15,11 @@ description: 把 ENDBattery (Swift SPM CLI) 交叉编译成 WebAssembly/WASI 并
 
 不适用:涉及线程 / 文件系统 / 网络 / `readLine` 的 Swift 代码(WASI 下能力受限,需先评估);非计算型、依赖系统 framework 的代码。
 
+## 架构决策
+
+- 产品入口只有 HTML/WASM,不保留产品级 CLI。计算逻辑抽成可被测试 import 的 library target;`ENDBattery` executable 只做 WASM 入口(stdin JSON → 计算 → print)。
+- 本地验证与 debug 走 `swift test`;原硬编码 `4号谷地`/`武陵` 场景迁为测试用例。
+
 ## 关键事实(已核对 swift.org 官方 WASM 文档)
 
 - 系统 Xcode 自带的 Swift **不含** wasm Swift SDK;必须用 swiftly 装独立 toolchain,且 SDK 版本要和 toolchain **精确匹配**。
@@ -51,7 +56,7 @@ swift run -c release --swift-sdk swift-6.3.2-RELEASE_wasm
 
 ### 4. 输入重构
 
-把硬编码 `configs` 改为从 **stdin JSON** 读取,Swift 端解码,网页表单据此拼 JSON。保留原 CLI 用法不破坏。config 在浏览器用 localStorage 保存,UI 可建 / 切换多个命名 config。
+拆出 library target 装计算逻辑;`ENDBattery` executable 改为从 **stdin JSON** 读取 → 调用 library → print,网页表单据此拼 JSON。**不保留产品级 CLI**;原硬编码 `4号谷地`/`武陵` 场景迁为 test target 用例,本地验证与 debug 走 `swift test`。config 在浏览器用 localStorage 保存,UI 可建 / 切换多个命名 config。
 
 ### 5. 部署(GitHub Actions → Pages)
 
@@ -59,7 +64,8 @@ html/js 静态源文件放仓库**根目录**。`.wasm` **不进 git**:写一个
 
 ## Validation
 
-- 本地起静态服务器(如 `python3 -m http.server`)打开页面,填一组参数,确认输出与 `swift run -c release` 跑同参数的 CLI 输出一致。
+- `swift test` 跑通已迁移场景(原硬编码 config 的期望输出)。
+- 本地起静态服务器(如 `python3 -m http.server`)打开页面,填一组参数,确认输出与对应测试场景一致。
 - push 后确认 Actions 构建成功、Pages 站点可访问。
 - 浏览器 DevTools Network 确认 `.wasm` 以 `application/wasm` 返回、无 404。
 

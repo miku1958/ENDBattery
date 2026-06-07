@@ -12,9 +12,9 @@
 
 ## 构建与验证
 
-- CLI 构建运行:`swift run -c release`(改动前后各跑一次,对比输出确认无回归)。
+- 产品入口是 HTML/WASM;本地验证与 debug 走 `swift test`。
 - 更细的 Swift 编码约定见 [.github/copilot-instructions.md](.github/copilot-instructions.md)。
 
 ## 进行中的工作
 
-- Swift → WebAssembly + 交互式网页(GitHub Pages):见 [.github/skills/swift-wasm-web/SKILL.md](.github/skills/swift-wasm-web/SKILL.md) 与同目录 `TODO.md`、`question.md`。
+- Swift → WebAssembly + 交互式网页(GitHub Pages):见 [.github/skills/swift-wasm-web/SKILL.md](.github/skills/swift-wasm-web/SKILL.md) 与同目录 `TODO.md`。
