@@ -117,7 +117,7 @@ swift run -c release --swift-sdk swift-6.3.2-RELEASE_wasm
 workflow:`.github/workflows/deploy-pages.yml`,两个 job:
 
 - `build`(`container: swift:6.3.2`):用**官方 Swift 发布镜像**而非在 CI 里现装 swiftly —— toolchain 预装,镜像 tag 必须与下面装的 wasm SDK **版本精确一致**(`swift:6.3.2` ↔ `swift-6.3.2-RELEASE_wasm`)。步骤:`swift sdk install <与本地同一 URL+checksum>` → `swift build -c release --swift-sdk swift-6.3.2-RELEASE_wasm --product ENDBattery` → 把 `index.html`/`app.js`/`loader.js`/`vendor/` 和产物 `.build/wasm32-unknown-wasip1/release/ENDBattery.wasm` 拷进 `_site/` → `actions/upload-pages-artifact@v3`。
-- `deploy`(`runs-on: ubuntu-latest`):`actions/configure-pages@v5`(会尝试自动 enable Pages,source=workflow)+ `actions/deploy-pages@v4`;顶层 `permissions: pages: write` + `id-token: write`。
+- `deploy`(`runs-on: ubuntu-latest`):`actions/configure-pages@v5`(只读取已存在的 Pages 站点,**不**用默认 token 自举)+ `actions/deploy-pages@v4`;顶层 `permissions: pages: write` + `id-token: write`。
 
 要点 / 坑:
 
@@ -125,7 +125,8 @@ workflow:`.github/workflows/deploy-pages.yml`,两个 job:
 - wasm 产物 triple 子目录 `wasm32-unknown-wasip1` 由 SDK 决定、与 host 架构无关,Linux amd64 runner 上路径同 mac。
 - **尺寸**:wasm 约 58MB(完整 Foundation,未瘦身)< Pages 单文件 100MB 限;Pages/Fastly 对 `application/wasm` 自动 gzip/br,裸传只剩零头,首版无需瘦身。要再压缩可在 build job 加 binaryen 跑 `wasm-opt -Os`,属增量,非必需。
 - `.wasm` **不进 git**(`/ENDBattery.wasm` 在 `.gitignore`),CI 每次 push 重编重放,网页永远最新。
-- 仓库 Settings → Pages 的 source 设为 "GitHub Actions" 是一次性前置(`configure-pages` 通常能自动 enable;否则手动设,或 `gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow`)。
+- **必须先一次性 enable Pages 才能 deploy**(已实测:不 enable 时 deploy job 在 Configure Pages 步报 HTTP 404 "Get Pages site failed")。`configure-pages@v5` 的 `enablement` 输入按其 action.yml **不接受默认 `GITHUB_TOKEN`**(需 PAT/App token),故它**不会**自举。用 owner token 跑 `gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow`(或 Settings → Pages 选 source = "GitHub Actions")开启一次即可,之后 CI 每次重跑都成功。
+- Node 20 弃用提醒:`checkout@v4`/`upload-artifact@v4`/`configure-pages@v5`/`deploy-pages@v4` 现跑在 Node 20 上,GitHub 将于 2026-06-16 强制迁到 Node 24。当前 run 仍绿,后续若因此 break 再升级 action 版本。
 
 ## Validation
 
@@ -135,6 +136,7 @@ workflow:`.github/workflows/deploy-pages.yml`,两个 job:
 - 本地起静态服务器(如 `python3 -m http.server`,需先把 `.wasm` 复制到根)打开页面,填一组参数,确认输出与对应测试场景一致。
 - push 后确认 Actions 构建成功、Pages 站点可访问。
 - 浏览器 DevTools Network 确认 `.wasm` 以 `application/wasm` 返回、无 404。
+- **已上线实测**(2026-06-07):站点 https://miku1958.github.io/ENDBattery/ ,`ENDBattery.wasm` 返回 200 + `application/wasm`;下载线上 `.wasm` 经 `loader.js` 跑 `武陵` 种子得 `621.1706`,与 `test武陵` 一致。**尚缺**:真实浏览器里表单/localStorage/多 config 交互(需 `chrome-cdp`,用户批准后才可跑)。
 
 ## Constraints / Safety
 
