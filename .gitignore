@@ -77,3 +77,7 @@ battery_opt
 # npm: the browser_wasi_shim used by the web loader is vendored under vendor/,
 # so no node_modules is committed; ignore any local install.
 node_modules/
+
+# The 60MB wasm build product the page fetches from the repo root. CI rebuilds
+# and places it next to index.html at deploy time; never commit it.
+/ENDBattery.wasm

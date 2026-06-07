@@ -103,14 +103,25 @@ swift run -c release --swift-sdk swift-6.3.2-RELEASE_wasm
 - 除 `configs` 外所有字段在 JSON 里都可省略,缺省回落 `CalculatorInput.init(from:)` 里写死的默认值;网页表单的「选填项」直接 1:1 映射这些字段。
 - config 在浏览器用 localStorage 保存,UI 可建 / 切换多个命名 config(待办 #3)。
 
+### 4.5 交互式页面(已完成)
+
+`index.html` + `app.js`(仓库根,与 `loader.js` 同级):
+
+- `app.js` 把纯数据函数(`buildStdinJson(config)`、`SEED_CONFIGS`、`OPTION_SPEC`/`OPTION_DEFAULTS`、`BATTERY_TYPES`)导出,DOM 接线整段用 `if (typeof document !== 'undefined')` guard 包住——这样 Node 测试可只 import 纯函数、不触发 `document`(同 `loader.js` 浏览器/Node 共用一份的思路)。
+- 表单:配置名(= `config.name`)、分流电池类型、`baseRequiredPower`、可增删的固定电池行(type + 选填 count);高级选项从 `OPTION_SPEC` 单一来源动态渲染,默认值逐项对齐 `CalculatorInput.init(from:)`,故表单不动时与"省略所有 tunable key"输出一致。`buildStdinJson` 的 `configs` 恒长度 1(一次算一条),固定电池 count 留空则不写 `count` 键。
+- 多 config:localStorage key `endbattery.configs.v1` 存一个 config 对象数组;保存按名覆盖、可切换/删除/新建;localStorage 为空时种入 `4号谷地`/`武陵`。
+- wasm:`WebAssembly.compileStreaming(fetch('ENDBattery.wasm'))`,catch 后回落 `WebAssembly.compile(arrayBuffer)`(兼容不发 `application/wasm` 的本地服务器);惰性编一次、跨次 `runWasm` 复用同一 Module(每次 `runWasm` 内部新建 instance,模块级状态不串)。
+
 ### 5. 部署(GitHub Actions → Pages)
 
-html/js 静态源文件放仓库**根目录**。`.wasm` **不进 git**:写一个 GitHub Actions workflow,装 swiftly + wasm SDK → `swift build -c release --swift-sdk <id>` → 把 `.wasm` 与静态资源打包 → 部署到 Pages。仓库 Settings 里 Pages source 设为 "GitHub Actions"。push Swift 改动后 CI 自动重编重部,网页永远是最新。
+html/js 静态源文件放仓库**根目录**(已落地:`index.html`、`app.js`、`loader.js`、`vendor/`)。`.wasm` **不进 git**(根目录的 `ENDBattery.wasm` 也已加进 `.gitignore`):写一个 GitHub Actions workflow,装 swiftly + wasm SDK → `swift build -c release --swift-sdk <id>` → 把 `.wasm` 复制到根并与静态资源打包 → 部署到 Pages。仓库 Settings 里 Pages source 设为 "GitHub Actions"。push Swift 改动后 CI 自动重编重部,网页永远是最新。
 
 ## Validation
 
 - `swift test` 跑通已迁移场景(原硬编码 config 的期望输出)。
-- 本地起静态服务器(如 `python3 -m http.server`)打开页面,填一组参数,确认输出与对应测试场景一致。
+- `node test/loader-smoke.mjs`:同一 loader + vendored shim 在 Node 跑 wasm,对照基线。
+- `node test/page-config-smoke.mjs`:import `app.js` 的 `buildStdinJson` + `SEED_CONFIGS`,把两个种子配置经 form→JSON→`runWasm` 跑出与基线一致的关键行——验证页面的"选中配置→开始计算"数据路径,无需浏览器。
+- 本地起静态服务器(如 `python3 -m http.server`,需先把 `.wasm` 复制到根)打开页面,填一组参数,确认输出与对应测试场景一致。
 - push 后确认 Actions 构建成功、Pages 站点可访问。
 - 浏览器 DevTools Network 确认 `.wasm` 以 `application/wasm` 返回、无 404。
 
