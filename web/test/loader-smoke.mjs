@@ -4,9 +4,9 @@
 //
 // Requires a local cross-compiled wasm build (it is not committed):
 //   . ~/.swiftly/env.sh && hash -r
-//   swift build -c release --swift-sdk swift-6.3.2-RELEASE_wasm -j 8
+//   cd swift && swift build -c release --swift-sdk swift-6.3.2-RELEASE_wasm -j 8
 //
-// Run:  node test/loader-smoke.mjs
+// Run:  node web/test/loader-smoke.mjs
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -15,8 +15,8 @@ import { dirname, join } from "node:path";
 import { runWasm } from "../loader.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(here, "..");
-const wasmPath = join(repoRoot, ".build/wasm32-unknown-wasip1/release/ENDBattery.wasm");
+const repoRoot = join(here, "..", "..");
+const wasmPath = join(repoRoot, "swift/.build/wasm32-unknown-wasip1/release/ENDBattery.wasm");
 const baselinePath = join(repoRoot, "logs/baseline-current-output.txt");
 
 // Drop the non-deterministic trailing "🕐 总耗时: X.XX 秒" timing line so the

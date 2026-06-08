@@ -4,7 +4,6 @@
 
 ## User settings
 .DS_Store
-/.build
 /Packages
 xcuserdata/
 
@@ -78,6 +77,6 @@ battery_opt
 # so no node_modules is committed; ignore any local install.
 node_modules/
 
-# The 60MB wasm build product the page fetches from the repo root. CI rebuilds
-# and places it next to index.html at deploy time; never commit it.
-/ENDBattery.wasm
+# The 60MB wasm build product the page fetches alongside index.html (in web/).
+# CI rebuilds and places it next to index.html at deploy time; never commit it.
+/web/ENDBattery.wasm

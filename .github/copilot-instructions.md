@@ -22,8 +22,8 @@ The hardcoded scenarios (e.g. `4号谷地`, `武陵`) live as test cases; local 
 ## Project Context
 
 - **Type:** Swift Package Manager (SPM) package; product is an HTML/WASM page deployed to GitHub Pages.
-- **WASM entry:** `Sources/ENDBattery/main.swift` (reads stdin JSON, prints result).
-- **Package Manifest:** `Package.swift`
+- **WASM entry:** `swift/Sources/ENDBattery/main.swift` (reads stdin JSON, prints result).
+- **Package Manifest:** `swift/Package.swift` (run `swift test`/`swift build` from the `swift/` directory).
 
 ## Coding Standards
 

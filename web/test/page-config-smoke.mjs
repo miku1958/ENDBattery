@@ -6,9 +6,9 @@
 //
 // Requires a local cross-compiled wasm build (not committed):
 //   . ~/.swiftly/env.sh && hash -r
-//   swift build -c release --swift-sdk swift-6.3.2-RELEASE_wasm -j 8
+//   cd swift && swift build -c release --swift-sdk swift-6.3.2-RELEASE_wasm -j 8
 //
-// Run:  node test/page-config-smoke.mjs
+// Run:  node web/test/page-config-smoke.mjs
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -18,8 +18,8 @@ import { runWasm } from "../loader.js";
 import { buildStdinJson, SEED_CONFIGS } from "../app.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(here, "..");
-const wasmPath = join(repoRoot, ".build/wasm32-unknown-wasip1/release/ENDBattery.wasm");
+const repoRoot = join(here, "..", "..");
+const wasmPath = join(repoRoot, "swift/.build/wasm32-unknown-wasip1/release/ENDBattery.wasm");
 
 let failures = 0;
 function check(name, cond, detail = "") {

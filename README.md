@@ -22,13 +22,13 @@ swift run
 或者编译为单文件脚本后运行：
 
 ```bash
-swiftc -O Sources/ENDBattery/main.swift -o battery_opt
+swiftc -O swift/Sources/ENDBattery/main.swift -o battery_opt
 ./battery_opt
 ```
 
 ### 配置
 
-在使用前，请根据基地情况修改配置文件。打开 `Sources/ENDBattery/main.swift`，在顶部的 `Config` 扩展中进行设置。
+在使用前，请根据基地情况修改配置文件。打开 `swift/Sources/ENDBattery/main.swift`，在顶部的 `Config` 扩展中进行设置。
 
 ```swift
 extension Config {

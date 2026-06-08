@@ -1,6 +1,6 @@
 # ENDBattery
 
-终末地电力优化计算器:Swift Package Manager 命令行工具,纯计算 + `print` 输出,入口 [Sources/ENDBattery/main.swift](Sources/ENDBattery/main.swift)。
+终末地电力优化计算器:核心计算用 Swift 写成,交叉编译为 WebAssembly,产品是交互式网页(托管在 GitHub Pages)。整个 SPM 包在 [swift/](swift/),前端在 [web/](web/);WASM 入口 [swift/Sources/ENDBattery/main.swift](swift/Sources/ENDBattery/main.swift) 读 stdin JSON → 计算 → `print`。
 
 ## 额外遵循的外部规则
 
@@ -12,7 +12,7 @@
 
 ## 构建与验证
 
-- 产品入口是 HTML/WASM;本地验证与 debug 走 `swift test`。
+- 产品入口是 HTML/WASM;本地验证与 debug 走 `swift test`(在 `swift/` 目录下跑)。
 - 更细的 Swift 编码约定见 [.github/copilot-instructions.md](.github/copilot-instructions.md)。
 
 ## 进行中的工作
