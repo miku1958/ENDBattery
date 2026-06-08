@@ -58,3 +58,83 @@ swift run   -c release --swift-sdk swift-6.3.2-RELEASE_wasm        # WasmKit 本
 
 4. ✅ **表单重排**。[index.html](../../../index.html) 把「分流电池类型」从「场景」拆出,新建「分流电池」fieldset 置于「固定电池」之后。最终结构:场景(配置名称 + 基础需求功率)→ 固定电池 → 分流电池 → 高级选项。`f-analyzed` id 不变,app.js 接线无需改。
 5. ✅ **本地预览 cp 工作流** 已记录在 [SKILL.md](SKILL.md) Validation 段(产物 gitignored,起静态服务器前 `cp .build/wasm32-unknown-wasip1/release/ENDBattery.wasm ./`;改过 Swift 电池名要先重编再 cp)。无代码改动。
+
+## 第三轮:目录重组 web/ + swift/(2026-06-08 用户确认,待执行)
+
+用户经 AskUserQuestion 确认布局:前端全进 `web/`,整个 SPM 包(Package.swift + Sources + Tests)进 `swift/`,根目录只剩 `web/ swift/ .github/ logs/ README.md CLAUDE.md LICENSE .gitignore .vscode/`。**用户要求执行**;本节是 turnkey 清单。
+
+### 1. 文件搬移(`git mv` 保历史;移动文件实体属就地编辑规则的允许例外)
+
+- `mkdir web && git mv index.html app.js loader.js vendor test web/`
+- `mkdir swift && git mv Package.swift Sources Tests swift/`
+- 不动:`.github/ logs/ README.md CLAUDE.md LICENSE .gitignore .vscode/`。`.swiftpm/`、`_site/`、`battery_opt`、根 `ENDBattery.wasm` 均 gitignored/未跟踪(无需 `git mv`);Xcode 会在 `swift/` 重新生成 `.swiftpm`。
+- Package.swift 用隐式路径(`Sources/<target>`),与 Sources/Tests 一起平移后相对结构不变,**Package.swift 不用改**。
+
+### 2. 相对路径:整体平移即不破,只 `web/test/*.mjs` 要改
+
+- `web/app.js` `import "./loader.js"`、`web/loader.js` `import "./vendor/..."`、`web/index.html` `<script src="app.js">` 与 `fetch("ENDBattery.wasm")`:全相对、随文件同移,**不改**。
+- `web/test/*.mjs` 的 `import "../app.js"` / `"../loader.js"`:`../` 仍指 `web/`,**不改**。
+- `web/test/loader-smoke.mjs` 与 `web/test/page-config-smoke.mjs` **各改两处**:`repoRoot = join(here, "..")` → `join(here, "..", "..")`(现 `web/test` 上两级才是仓库根);`wasmPath` 的 `.build/...` → `swift/.build/wasm32-unknown-wasip1/release/ENDBattery.wasm`。`baselinePath` 的 `logs/...` 字面不变(repoRoot 修对后自然指对)。
+
+### 3. CI workflow [.github/workflows/deploy-pages.yml](../../workflows/deploy-pages.yml)
+
+- `swift sdk install` 与 `swift build` 两步加 `working-directory: swift`。
+- wasm cp 源 → `swift/.build/wasm32-unknown-wasip1/release/ENDBattery.wasm`。
+- 组装 `_site`:`cp web/index.html web/app.js web/loader.js _site/`、`cp -R web/vendor _site/vendor`、wasm cp 到 `_site/ENDBattery.wasm`。`_site` 内 index.html 与 wasm 仍同级,**线上行为不变**。
+
+### 4. .gitignore
+
+- `/ENDBattery.wasm` → `/web/ENDBattery.wasm`(本地 cp 目标移到 `web/`)。
+- `.build/`(无前导斜杠)已匹配 `swift/.build/`,无需改;锚根的 `/.build` 失效,顺手删那一行。
+
+### 5. 文档路径(grep 后逐处改)
+
+- [CLAUDE.md](../../../CLAUDE.md):`Sources/ENDBattery/main.swift` → `swift/Sources/ENDBattery/main.swift`,及构建/验证段。
+- [.github/copilot-instructions.md](../../copilot-instructions.md):WASM entry 路径同上。
+- 本 [SKILL.md](SKILL.md):`swift build/test` 改在 `swift/` 跑、wasm 路径 `swift/.build/...`、本地 cp 命令 `cp swift/.build/.../ENDBattery.wasm web/`。
+- 本 [TODO.md](TODO.md):第二轮 #5 与「本地环境」段的构建/ cp 路径同步。
+- grep `README.md` 看有无路径引用,有则改。
+
+### 6. 本地预览(改后)
+
+```bash
+. ~/.swiftly/env.sh && hash -r
+cd swift && nice -n 19 swift build -c release --swift-sdk swift-6.3.2-RELEASE_wasm -j 8 && cd ..
+cp swift/.build/wasm32-unknown-wasip1/release/ENDBattery.wasm web/ENDBattery.wasm
+cd web && python3 -m http.server 8000      # 开 http://localhost:8000/
+```
+
+### 7. 验证门(全绿才算完)
+
+- `cd swift && swift test`(host)3/3。
+- `node web/test/loader-smoke.mjs`、`node web/test/page-config-smoke.mjs` 对照 baseline byte-exact。
+- 本地起 server `curl`:`/app.js` 新名、`/ENDBattery.wasm` 200 + `application/wasm`、`/index.html` 无残留英文标识符。
+- YAML 解析 workflow;`_site` 组装路径与页面 `fetch`/`import` 逐一对应。
+
+## 第四轮:网页「分流蓝图」可视化(2026-06-08 用户确认,待执行)
+
+经 AskUserQuestion 确认:产出 = **网页可视化示意图**(用从游戏截图提取的 6 个 sprite 渲染);范围 = **通用功能**(任意算法步骤输出 → 自动渲染),集成进现有页面;保真度 = **逻辑示意**,不要求游戏内可导入(故无需逆向游戏蓝图格式 / 精确接线)。
+
+### 6 个 sprite(从截图裁,源 `Screenshot 2026-06-08 ...png`,3638×1826)— 已全部确认
+
+`1 热能池` · `2 三分分流器` · `3 三合一汇流器` · `4 直传送带` · `5 转弯传送带` · `6 物流桥`(belt 立体交叉,垂直两向都有带通过)。**无独立二分分流器**:`2🔴`/`2🟢` 两分步物理上用三分分流器只接 2 口实现,渲染用同一 sprite + 标注区分 2/3。工作裁图在 `.scratch/icons/`(gitignored,`splitter`/`merger` 预览裁框略偏);render-ready sprite(tile 对齐、统一尺寸、可能去背)实现时产出,脱敏后存 `web/assets/icons/`,不放 `~/`。
+
+### 数据源(设计点,待定)
+
+`🛠 操作步骤` 打印串(如 `3🔴×2 2🔴 2🟢 3🔴×3 3🟢×2`)是**归一化排序**的(`Calculator.swift:382` 把 discard 段按 type 降序),≠ 传送带物理顺序。
+- 选项 A(倾向):直接用打印串分组顺序,示意图够用,零 Swift 改动。
+- 选项 B:让 wasm 额外输出有序 `steps`(JSON),前端按真实物理顺序渲染。
+- 除非用户要物理保真,默认 A。
+
+### 布局约定(示意,待定)
+
+每步一个分流器 sprite(2/3 口);🟢 add 步紧跟一个三合一汇流器;开头放入口汇流器 + 阻流器段;用直/弯带连接。最简起步:**左→右线性链**;蛇形折行为后续增强。
+
+### 落点与依赖
+
+- 落 `web/` 前端:渲染逻辑进 `app.js` 或新模块,sprite 进 `web/assets/icons/`,与现有结果区集成。
+- **依赖第三轮目录重组**:建议**先做 web/+swift/ 重组,再做本功能**,避免落根后再搬。
+
+### 验证
+
+渲染多个步骤串,人工核对:sprite 总数与步骤数一致、每个 🟢 配一个汇流器、入口/阻流器在最前、2/3 口分流器用对 sprite。
