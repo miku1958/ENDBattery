@@ -14,11 +14,11 @@ import { runWasm } from "./loader.js";
 // Battery kinds, matching ENDBatteryCore's Config.Battery and its Chinese names.
 export const BATTERY_TYPES = [
 	{ value: "originium", label: "源石" },
-	{ value: "green", label: "绿电池" },
-	{ value: "blue", label: "蓝电池" },
-	{ value: "purple", label: "紫电池" },
-	{ value: "lowEarth", label: "低容息壤电池" },
-	{ value: "midEarth", label: "中容息壤电池" },
+	{ value: "green", label: "低容谷地电池" },
+	{ value: "blue", label: "中容谷地电池" },
+	{ value: "purple", label: "高容谷地电池" },
+	{ value: "lowEarth", label: "低容武陵电池" },
+	{ value: "midEarth", label: "中容武陵电池" },
 ];
 
 // Top-level tunables. Defaults mirror CalculatorInput.init(from:) so that a form
@@ -156,7 +156,7 @@ function initPage() {
 		for (const t of BATTERY_TYPES) {
 			const opt = document.createElement("option");
 			opt.value = t.value;
-			opt.textContent = `${t.label} (${t.value})`;
+			opt.textContent = t.label;
 			if (t.value === selected) opt.selected = true;
 			sel.append(opt);
 		}
@@ -167,7 +167,7 @@ function initPage() {
 	for (const t of BATTERY_TYPES) {
 		const opt = document.createElement("option");
 		opt.value = t.value;
-		opt.textContent = `${t.label} (${t.value})`;
+		opt.textContent = t.label;
 		els.analyzed.append(opt);
 	}
 

@@ -67,18 +67,22 @@
 			<label>配置名称
 				<input id="f-name" type="text" required>
 			</label>
-			<label>分流电池类型
-				<select id="f-analyzed"></select>
-			</label>
-			<label>基础需求功率 (baseRequiredPower)
+			<label>基础需求功率
 				<input id="f-power" type="number" step="any" required>
 			</label>
 		</fieldset>
 
 		<fieldset>
-			<legend>固定电池 (staticBattery)</legend>
+			<legend>固定电池</legend>
 			<div id="static-rows"></div>
 			<button id="btn-add-static" type="button">添加固定电池</button>
+		</fieldset>
+
+		<fieldset>
+			<legend>分流电池</legend>
+			<label>分流电池类型
+				<select id="f-analyzed"></select>
+			</label>
 		</fieldset>
 
 		<details>

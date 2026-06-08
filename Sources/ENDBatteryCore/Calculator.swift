@@ -73,15 +73,15 @@ struct Config {
 			case .originium:
 				return "源石"
 			case .green:
-				return "绿电池"
+				return "低容谷地电池"
 			case .blue:
-				return "蓝电池"
+				return "中容谷地电池"
 			case .purple:
-				return "紫电池"
+				return "高容谷地电池"
 			case .lowEarth:
-				return "低容息壤电池"
+				return "低容武陵电池"
 			case .midEarth:
-				return "中容息壤电池"
+				return "中容武陵电池"
 			}
 		}
 

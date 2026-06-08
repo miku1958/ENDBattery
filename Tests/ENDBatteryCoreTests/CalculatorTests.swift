@@ -50,7 +50,7 @@ final class CalculatorTests: XCTestCase {
 			}
 			""")
 
-		XCTAssertTrue(out.contains("📦 电池数量:　紫电池(常开): 3个, 紫电池(分流): 2个"), out)
+		XCTAssertTrue(out.contains("📦 电池数量:　高容谷地电池(常开): 3个, 高容谷地电池(分流): 2个"), out)
 		XCTAssertTrue(out.contains("🛠 操作步骤(8):　3🔴×2     2🟢     3🟢     2🔴     2🟢     3🔴     3🟢"), out)
 		XCTAssertTrue(out.contains("🔌 最终功率:　1742.7984"), out)
 		XCTAssertTrue(out.contains("⚖️ 差值:　　　12.7984"), out)
@@ -73,7 +73,7 @@ final class CalculatorTests: XCTestCase {
 			}
 			""")
 
-		XCTAssertTrue(out.contains("📦 电池数量:　中容息壤电池: 1个, 紫电池(常开): 2个, 紫电池(分流): 1个"), out)
+		XCTAssertTrue(out.contains("📦 电池数量:　中容武陵电池: 1个, 高容谷地电池(常开): 2个, 高容谷地电池(分流): 1个"), out)
 		XCTAssertTrue(out.contains("🛠 操作步骤(9):　3🔴×2     2🔴     2🟢     3🔴×3     3🟢×2"), out)
 		XCTAssertTrue(out.contains("🔌 最终功率:　621.1706"), out)
 		XCTAssertTrue(out.contains("⚖️ 差值:　　　11.1706"), out)
@@ -88,6 +88,6 @@ final class CalculatorTests: XCTestCase {
 			{ "configs": [ { "name": "4号谷地", "staticBattery": [{ "type": "purple" }], "analyzedBattery": { "type": "purple" }, "baseRequiredPower": 5230 } ] }
 			""")
 		XCTAssertTrue(out.contains("🔍 正在搜索:　4号谷地"), out)
-		XCTAssertTrue(out.contains("📦 电池数量:　紫电池(常开): 3个, 紫电池(分流): 2个"), out)
+		XCTAssertTrue(out.contains("📦 电池数量:　高容谷地电池(常开): 3个, 高容谷地电池(分流): 2个"), out)
 	}
 }

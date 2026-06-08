@@ -36,4 +36,25 @@ swift run   -c release --swift-sdk swift-6.3.2-RELEASE_wasm        # WasmKit 本
 
 ## 待确认(需用户输入,非 agent 可自决)
 
-- **真实浏览器交互验证**:表单渲染 / localStorage 持久化 / 多 config 切换-保存-删除 这些**纯 DOM 交互**尚未在真实 Chrome 里实测过(纯数据/计算路径已被 `page-config-smoke` + 线上 wasm 实测覆盖)。要实测需用 `chrome-cdp` 驱动真实浏览器,而该能力须用户**显式批准**后才可用。问题与 Node 20 弃用提醒一并记入 `question.md`。
+- **真实浏览器交互验证**:表单渲染(含第二轮 #1 标签/下拉文案、#4「分流电池」分组)/ localStorage 持久化 / 多 config 切换-保存-删除 这些**纯 DOM 交互**尚未在真实 Chrome 里实测过(纯数据/计算路径已被 `page-config-smoke` + 线上 wasm 实测覆盖)。要实测需用 `chrome-cdp` 驱动真实浏览器,而该能力须用户**显式批准**后才可用。问题与 Node 20 弃用提醒一并记入 `question.md`。
+- **README 已陈旧**:[README.md](../../../README.md) 仍描述 round 1 已删除的产品级 CLI(`swift run` 跑硬编码 `Config.myBase`、`swiftc Sources/ENDBattery/main.swift`、旧输出格式 `所需电池数量:`、旧电池名表),与现 HTML/WASM 产品完全不符。属 round 1 删 CLI 时漏改的整篇陈旧文档,非第二轮改名范围;如何处理(按现产品重写 / 删除)需用户决定,故未在本轮顺手改。
+
+## 第二轮:UI 改进需求(2026-06-08,已完成)
+
+用户反馈 5 点,均已落地。验证门全绿:`swift test` 3/3、`node test/loader-smoke.mjs`、`node test/page-config-smoke.mjs`(后两者对照重生成的 [logs/baseline-current-output.txt](../../../logs/baseline-current-output.txt) byte-exact)、`node --check app.js`;wasm 已用新名重编(`.build/wasm32-unknown-wasip1/release/ENDBattery.wasm`)。编号沿用用户原话。
+
+1. ✅ **移除界面英文标识符**。[index.html](../../../index.html):`基础需求功率 (baseRequiredPower)` → `基础需求功率`、legend `固定电池 (staticBattery)` → `固定电池`。[app.js](../../../app.js):两处电池下拉文案 `${t.label} (${t.value})` → `t.label`(去掉 `(green)`/`(purple)` 等英文 value)。
+2. ✅ **标签文字选中即聚焦** 随 #1 自然消除:移除标识符后无复制需求,故不拆描述文本与 input(保持 `<label>` 包裹 `<input>` 的标准行为)。
+3. ✅ **电池改游戏正式名称**(源石不改)。改 [Calculator.swift](../../../Sources/ENDBatteryCore/Calculator.swift) `Battery.name`(单一来源,驱动结果文本)+ [app.js](../../../app.js) `BATTERY_TYPES` label;同步 `ENDBatteryCoreTests` 断言、两个 node smoke 断言、重生成 baseline、重编 wasm。改名仅改显示串,所有数值不变(smoke byte-exact 已证)。映射(功率/寿命常量与游戏实测吻合,确证非推断;来源:游民星空各容量电池蓝图/效率分析、巴哈姆特 PWM 发电攻略):
+
+   | code | 改为 | 功率/寿命 |
+   |---|---|---|
+   | `green` | 低容谷地电池 | 220 / 40s |
+   | `blue` | 中容谷地电池 | 420 / 40s |
+   | `purple` | 高容谷地电池 | 1100 / 40s |
+   | `lowEarth` | 低容武陵电池 | 1600 / 40s |
+   | `midEarth` | 中容武陵电池 | 3200 / 40s |
+   | `originium` | 源石(不改) | 50 / 8s |
+
+4. ✅ **表单重排**。[index.html](../../../index.html) 把「分流电池类型」从「场景」拆出,新建「分流电池」fieldset 置于「固定电池」之后。最终结构:场景(配置名称 + 基础需求功率)→ 固定电池 → 分流电池 → 高级选项。`f-analyzed` id 不变,app.js 接线无需改。
+5. ✅ **本地预览 cp 工作流** 已记录在 [SKILL.md](SKILL.md) Validation 段(产物 gitignored,起静态服务器前 `cp .build/wasm32-unknown-wasip1/release/ENDBattery.wasm ./`;改过 Swift 电池名要先重编再 cp)。无代码改动。

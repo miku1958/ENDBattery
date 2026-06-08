@@ -75,7 +75,7 @@ const cases = [
 		label: "4号谷地",
 		json: { configs: [{ name: "4号谷地", staticBattery: [{ type: "purple" }], analyzedBattery: { type: "purple" }, baseRequiredPower: 5230 }] },
 		lines: [
-			"📦 电池数量:　紫电池(常开): 3个, 紫电池(分流): 2个",
+			"📦 电池数量:　高容谷地电池(常开): 3个, 高容谷地电池(分流): 2个",
 			"🔌 最终功率:　1742.7984",
 			"💎 净收益:　　0.010391 颗/秒  ≈  897.778颗/天(理论可省: 922.909 颗/天, 差值: 25.131)",
 		],
@@ -84,7 +84,7 @@ const cases = [
 		label: "武陵",
 		json: { configs: [{ name: "武陵", staticBattery: [{ type: "midEarth", count: 1 }], analyzedBattery: { type: "purple" }, baseRequiredPower: 6210 }] },
 		lines: [
-			"📦 电池数量:　中容息壤电池: 1个, 紫电池(常开): 2个, 紫电池(分流): 1个",
+			"📦 电池数量:　中容武陵电池: 1个, 高容谷地电池(常开): 2个, 高容谷地电池(分流): 1个",
 			"🔌 最终功率:　621.1706",
 			"💎 净收益:　　0.010882 颗/秒  ≈  940.247颗/天(理论可省: 962.182 颗/天, 差值: 21.935)",
 		],
