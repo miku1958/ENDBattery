@@ -114,30 +114,27 @@ cd web && python3 -m http.server 8000      # 开 http://localhost:8000/
 - 本地起 server `curl`:`/app.js` 新名、`/ENDBattery.wasm` 200 + `application/wasm`、`/index.html` 无残留英文标识符。
 - YAML 解析 workflow;`_site` 组装路径与页面 `fetch`/`import` 逐一对应。
 
-## 第四轮:网页「分流蓝图」可视化(2026-06-08 用户确认,待执行)
+## 第四轮:网页「分流蓝图」可视化(2026-06-08 用户确认,进行中)
 
 经 AskUserQuestion 确认:产出 = **网页可视化示意图**(用从游戏截图提取的 6 个 sprite 渲染);范围 = **通用功能**(任意算法步骤输出 → 自动渲染),集成进现有页面;保真度 = **逻辑示意**,不要求游戏内可导入(故无需逆向游戏蓝图格式 / 精确接线)。
+
+### 子任务进度(按执行顺序)
+
+1. ✅ **步骤串解析器 + 渲染模型(纯核心,Node 可测)**。[web/blueprint.js](../../../web/blueprint.js):`parseSteps(actions)` 把 `🛠 操作步骤` 串解析成左→右线性示意的渲染模型,`extractStepsLine(stdout)` 从整段 stdout 抽出 `操作步骤(N):　<tokens>` 行。token 文法 `^([23])(🔴|🟢)(?:×(\d+))?$`:`2/3`=分流口数(同一 sprite,数字作 badge)、`🟢`=add(分流后接汇流器)、`🔴`=discard(阻流,不汇流)、`×N`=游程展开成 N 个独立步。模型 `nodes` = `[热能池(source) → 入口汇流(entry merger) → 每步 splitter(add 步再跟一个 merge merger)]`;`unparsed` 收非法 token(不静默丢)。**sprite 名契约**(下一步制图必须产出同名文件):`web/assets/icons/{thermal-pool,splitter,merger,belt-straight,belt-curve,bridge}.png`。验证:[web/test/blueprint-smoke.mjs](../../../web/test/blueprint-smoke.mjs)(`node web/test/blueprint-smoke.mjs`)拿两个种子的真实 `操作步骤` 行断言——`stepCount` == 打印的 N、splitter 数 == 步数、merge 汇流器数 == 🟢 数(4号谷地 4 / 武陵 3)、source+entry 在最前、2/3 口正确、`3🔴×2` 展开成 2 步、空串/非法 token 不崩,28/28 全绿;`node --check web/blueprint.js` 过;loader-smoke / page-config-smoke 仍全绿(纯新增文件,未动既有路径)。
+2. ⬜ **render-ready sprite → `web/assets/icons/`**。产出步骤 #1 契约里的 6 个 png(tile 对齐、统一尺寸、去游戏 UI chrome)。**开放点**(下一轮先定):`.scratch/icons/` 的工作裁图里 splitter/merger/bridge 含相邻 tile 与网格线(chrome 污染),低保真但能用;干净重裁需 **3638×1826 源截图**(`Screenshot 2026-06-08 ...png`,**当前不在仓库内**,只有用户处有)。「逻辑示意」保真度下,可先用裁图收紧后凑合,或请用户补源截图重裁。
+3. ⬜ **DOM 渲染器(blueprint.js,`typeof document` guard)**:吃 #1 的 `nodes`,排成 flex 横链,tile 间插直传送带 sprite,splitter 显 2/3 badge + 红/绿 tint。需真实浏览器目视(`chrome-cdp`,须用户批准),归入下方「待确认」的浏览器交互验证一并做。
+4. ⬜ **集成进页面**:`app.js` 提交计算后用 `extractStepsLine(stdout)` → `parseSteps` → 渲染到 [index.html](../../../web/index.html) 新容器,与结果区并列。
+
+### 已定设计点(原「待定」已解,2026-06-08)
+
+- **数据源 = 选项 A**:直接用 `操作步骤` 打印串的分组顺序渲染,零 Swift 改动(用户未要求物理保真,故不走选项 B 的有序 `steps` JSON)。打印串本身把 preSplitBits 的 `阻流` 段排在最前,线性渲染天然满足「阻流器段在前」。
+- **布局 = 左→右线性链**:最简起步,蛇形折行留作后续增强。
 
 ### 6 个 sprite(从截图裁,源 `Screenshot 2026-06-08 ...png`,3638×1826)— 已全部确认
 
 `1 热能池` · `2 三分分流器` · `3 三合一汇流器` · `4 直传送带` · `5 转弯传送带` · `6 物流桥`(belt 立体交叉,垂直两向都有带通过)。**无独立二分分流器**:`2🔴`/`2🟢` 两分步物理上用三分分流器只接 2 口实现,渲染用同一 sprite + 标注区分 2/3。工作裁图在 `.scratch/icons/`(gitignored,`splitter`/`merger` 预览裁框略偏);render-ready sprite(tile 对齐、统一尺寸、可能去背)实现时产出,脱敏后存 `web/assets/icons/`,不放 `~/`。
 
-### 数据源(设计点,待定)
-
-`🛠 操作步骤` 打印串(如 `3🔴×2 2🔴 2🟢 3🔴×3 3🟢×2`)是**归一化排序**的(`Calculator.swift:382` 把 discard 段按 type 降序),≠ 传送带物理顺序。
-- 选项 A(倾向):直接用打印串分组顺序,示意图够用,零 Swift 改动。
-- 选项 B:让 wasm 额外输出有序 `steps`(JSON),前端按真实物理顺序渲染。
-- 除非用户要物理保真,默认 A。
-
-### 布局约定(示意,待定)
-
-每步一个分流器 sprite(2/3 口);🟢 add 步紧跟一个三合一汇流器;开头放入口汇流器 + 阻流器段;用直/弯带连接。最简起步:**左→右线性链**;蛇形折行为后续增强。
-
-### 落点与依赖
-
-- 落 `web/` 前端:渲染逻辑进 `app.js` 或新模块,sprite 进 `web/assets/icons/`,与现有结果区集成。
-- **依赖第三轮目录重组**:建议**先做 web/+swift/ 重组,再做本功能**,避免落根后再搬。
-
 ### 验证
 
-渲染多个步骤串,人工核对:sprite 总数与步骤数一致、每个 🟢 配一个汇流器、入口/阻流器在最前、2/3 口分流器用对 sprite。
+- 纯核心(子任务 #1):`node web/test/blueprint-smoke.mjs` 对真实 `操作步骤` 行断言渲染规则(已绿)。
+- 渲染器 + 集成(子任务 #3/#4):真实浏览器目视——sprite 总数与步骤数一致、每个 🟢 配一个汇流器、source+入口汇流在最前、2/3 口分流器用对 sprite。

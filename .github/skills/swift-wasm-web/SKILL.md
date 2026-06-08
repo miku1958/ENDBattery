@@ -115,6 +115,13 @@ swift run -c release --swift-sdk swift-6.3.2-RELEASE_wasm
 - 多 config:localStorage key `endbattery.configs.v1` 存一个 config 对象数组;保存按名覆盖、可切换/删除/新建;localStorage 为空时种入 `4号谷地`/`武陵`。
 - wasm:`WebAssembly.compileStreaming(fetch('ENDBattery.wasm'))`,catch 后回落 `WebAssembly.compile(arrayBuffer)`(兼容不发 `application/wasm` 的本地服务器);惰性编一次、跨次 `runWasm` 复用同一 Module(每次 `runWasm` 内部新建 instance,模块级状态不串)。
 
+### 4.6 分流蓝图可视化(round 4,纯核心已落地)
+
+把计算输出的 `🛠 操作步骤` 串渲染成左→右线性示意图。纯解析核心在 `web/blueprint.js`(无 DOM,`web/test/blueprint-smoke.mjs` 用 Node 断言),sprite 与 DOM 渲染器分步加。
+
+- **步骤串文法**(来自 `Calculator.swift` 的 `allActions`):token = `<ports><action>[×<count>]`,空白分隔。`ports` 2/3 = 分流口数(同一 3 分流器 sprite,数字作 badge);`action` 🟢=add(分流后接三合一汇流器)/🔴=discard(阻流,不汇流);`×N` 是连续相同步的游程编码。串已归一化(preSplitBits 的阻流段在最前、同 action 组按 type 降序),故按打印顺序线性渲染即「逻辑示意」,不含物理传送带顺序。
+- **blueprint.js 契约**:`extractStepsLine(stdout)` 抽 `操作步骤(N):　<tokens>` 行(冒号后是全角空格 U+3000);`parseSteps(actions)` → `{raw, steps, nodes, stepCount, unparsed}`,`nodes` = 热能池(source) → 入口汇流(entry merger) → 每步 splitter(add 步再跟一个 merge merger),`unparsed` 收非法 token 不静默丢。sprite 名固定 `web/assets/icons/{thermal-pool,splitter,merger,belt-straight,belt-curve,bridge}.png`(制图须产同名文件)。
+
 ### 5. 部署(GitHub Actions → Pages)
 
 workflow:`.github/workflows/deploy-pages.yml`,两个 job:
