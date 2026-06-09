@@ -46,6 +46,25 @@
 		pre.err { color: #c0392b; }
 		pre.err:empty { display: none; }
 		details summary { cursor: pointer; font-weight: 600; margin-bottom: 0.5rem; }
+
+		/* —— 分流蓝图 schematic —— */
+		.bp-chain { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 0.15rem; padding: 0.5rem 0; }
+		.bp-tile { display: flex; flex-direction: column; align-items: center; width: 60px; }
+		.bp-icon { position: relative; width: 52px; height: 52px; border-radius: 8px; display: flex; align-items: center; justify-content: center; }
+		.bp-icon img { width: 48px; height: 48px; display: block; }
+		.bp-add .bp-icon { background: rgba(34, 197, 94, 0.18); }
+		.bp-discard .bp-icon { background: rgba(239, 68, 68, 0.18); }
+		.bp-badge {
+			position: absolute; top: -4px; right: -4px;
+			min-width: 1.1rem; height: 1.1rem; padding: 0 0.2rem;
+			border-radius: 0.6rem; background: #475569; color: #fff;
+			font-size: 0.7rem; line-height: 1.1rem; text-align: center; font-weight: 600;
+		}
+		.bp-label { font-size: 0.68rem; color: #888; margin-top: 0.2rem; text-align: center; line-height: 1.2; }
+		.bp-belt { display: flex; align-items: center; height: 52px; }
+		.bp-belt img { width: 26px; height: 26px; display: block; opacity: 0.8; }
+		.bp-empty { color: #888; }
+		.bp-warn { color: #c0392b; font-size: 0.85rem; }
 	</style>
 </head>
 <body>

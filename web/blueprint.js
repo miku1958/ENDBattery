@@ -117,3 +117,86 @@ export function parseSteps(actions) {
 
 	return { raw, steps, nodes, stepCount: steps.length, unparsed };
 }
+
+// ————————————————————————————— DOM renderer —————————————————————————————
+//
+// Render a parseSteps() model into `container` as a left→right flex chain of
+// sprite tiles, with a straight-belt sprite between every pair of tiles.
+// Splitter tiles carry a 2/3 port badge and a green (add) / red (discard) tint;
+// the transparent SVG sprites let the tint show through.
+//
+// `document` is only touched when this is called, so the pure-core smoke test
+// (which imports parseSteps/extractStepsLine/SPRITES) loads the module fine
+// under Node; the render smoke test supplies a minimal document stub instead.
+
+// Sprite paths are built relative to the page, matching app.js's fetch("ENDBattery.wasm").
+const ICON_DIR = "assets/icons";
+
+function spriteTile(node) {
+	const tile = document.createElement("div");
+	const cls = ["bp-tile", `bp-${node.kind}`];
+	if (node.kind === "splitter") cls.push(node.action === "add" ? "bp-add" : "bp-discard");
+	tile.className = cls.join(" ");
+
+	const icon = document.createElement("div");
+	icon.className = "bp-icon";
+
+	const img = document.createElement("img");
+	img.src = `${ICON_DIR}/${node.sprite}.svg`;
+	img.alt = node.label;
+	icon.append(img);
+
+	if (node.badge != null) {
+		const badge = document.createElement("span");
+		badge.className = "bp-badge";
+		badge.textContent = String(node.badge);
+		icon.append(badge);
+	}
+	tile.append(icon);
+
+	const label = document.createElement("div");
+	label.className = "bp-label";
+	label.textContent = node.label;
+	tile.append(label);
+
+	return tile;
+}
+
+function beltTile() {
+	const belt = document.createElement("div");
+	belt.className = "bp-belt";
+	const img = document.createElement("img");
+	img.src = `${ICON_DIR}/${SPRITES.beltStraight}.svg`;
+	img.alt = "传送带";
+	belt.append(img);
+	return belt;
+}
+
+// Render `model` (from parseSteps) into `container`, replacing its contents.
+// An empty model shows a placeholder; unparsed tokens are surfaced, not dropped.
+export function renderBlueprint(model, container) {
+	container.replaceChildren();
+
+	if (!model || model.nodes.length === 0) {
+		const empty = document.createElement("p");
+		empty.className = "bp-empty";
+		empty.textContent = "(无分流步骤)";
+		container.append(empty);
+		return;
+	}
+
+	const chain = document.createElement("div");
+	chain.className = "bp-chain";
+	model.nodes.forEach((node, i) => {
+		if (i > 0) chain.append(beltTile());
+		chain.append(spriteTile(node));
+	});
+	container.append(chain);
+
+	if (model.unparsed.length > 0) {
+		const warn = document.createElement("p");
+		warn.className = "bp-warn";
+		warn.textContent = `未识别步骤: ${model.unparsed.join(" ")}`;
+		container.append(warn);
+	}
+}
