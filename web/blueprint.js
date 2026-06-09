@@ -16,8 +16,8 @@
 // so rendering tokens left→right in print order is the "逻辑示意" layout — no
 // physical belt order is implied (data-source option A).
 
-// Sprite base names under web/assets/icons/<name>.png. The sprite-prep subtask
-// must produce exactly these files; the DOM renderer builds the paths from here.
+// Sprite base names under web/assets/icons/<name>.svg (hand-drawn schematic
+// vectors). The DOM renderer builds the paths from here by appending ".svg".
 export const SPRITES = {
 	thermalPool: "thermal-pool", // 1 热能池 — the source
 	splitter: "splitter",        // 2 三分分流器 — one per step (2/3 via badge)

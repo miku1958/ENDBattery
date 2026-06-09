@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="物流桥">
+  <title>物流桥</title>
+  <!-- horizontal belt (passes under) -->
+  <line x1="6" y1="32" x2="58" y2="32" stroke="#475569" stroke-width="18" stroke-linecap="round"/>
+  <line x1="6" y1="32" x2="58" y2="32" stroke="#e5e7eb" stroke-width="14" stroke-linecap="round"/>
+  <!-- vertical belt bridges over -->
+  <line x1="32" y1="6" x2="32" y2="58" stroke="#1f2937" stroke-width="20" stroke-linecap="round" opacity="0.18"/>
+  <line x1="32" y1="6" x2="32" y2="58" stroke="#475569" stroke-width="18" stroke-linecap="round"/>
+  <line x1="32" y1="6" x2="32" y2="58" stroke="#e5e7eb" stroke-width="14" stroke-linecap="round"/>
+  <!-- direction chevrons: horizontal → and vertical ↑ -->
+  <g fill="none" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 27 L18 32 L12 37"/>
+    <path d="M27 50 L32 44 L37 50"/>
+  </g>
+</svg>

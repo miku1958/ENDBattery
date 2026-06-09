@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="三合一汇流器">
+  <title>三合一汇流器</title>
+  <defs>
+    <marker id="ah" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L9 4.5 L0 9 z" fill="#2563eb"/>
+    </marker>
+  </defs>
+  <!-- three input belts converging -->
+  <g fill="none" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round" marker-end="url(#ah)">
+    <path d="M8 14 L26 30"/>
+    <path d="M8 32 L24 32"/>
+    <path d="M8 50 L26 34"/>
+  </g>
+  <!-- merger body -->
+  <rect x="28" y="22" width="14" height="20" rx="4" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+  <!-- single output belt -->
+  <line x1="42" y1="32" x2="56" y2="32" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round" marker-end="url(#ah)"/>
+</svg>

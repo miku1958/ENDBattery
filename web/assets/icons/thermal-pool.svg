@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="热能池">
+  <title>热能池</title>
+  <defs>
+    <linearGradient id="heat" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbbf24"/>
+      <stop offset="1" stop-color="#ef4444"/>
+    </linearGradient>
+  </defs>
+  <!-- rising heat plumes -->
+  <g fill="none" stroke="#f97316" stroke-width="3" stroke-linecap="round">
+    <path d="M23 32 c-4 -5 4 -9 0 -14 c-4 -5 4 -8 0 -12"/>
+    <path d="M32 32 c-4 -5 4 -9 0 -14 c-4 -5 4 -8 0 -12"/>
+    <path d="M41 32 c-4 -5 4 -9 0 -14 c-4 -5 4 -8 0 -12"/>
+  </g>
+  <!-- molten basin -->
+  <rect x="13" y="33" width="38" height="20" rx="7" fill="url(#heat)" stroke="#b91c1c" stroke-width="1.5"/>
+  <ellipse cx="32" cy="33" rx="19" ry="4.5" fill="#fde68a" stroke="#f59e0b" stroke-width="1.5"/>
+</svg>
