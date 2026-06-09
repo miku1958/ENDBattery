@@ -126,17 +126,18 @@ swift run -c release --swift-sdk swift-6.3.2-RELEASE_wasm
 
 workflow:`.github/workflows/deploy-pages.yml`,两个 job:
 
-- `build`(`container: swift:6.3.2`):用**官方 Swift 发布镜像**而非在 CI 里现装 swiftly —— toolchain 预装,镜像 tag 必须与下面装的 wasm SDK **版本精确一致**(`swift:6.3.2` ↔ `swift-6.3.2-RELEASE_wasm`)。步骤(`swift sdk install` 与 `swift build` 两步 `working-directory: swift`):`swift sdk install <与本地同一 URL+checksum>` → `swift build -c release --swift-sdk swift-6.3.2-RELEASE_wasm --product ENDBattery` → 把 `web/index.html`/`web/app.js`/`web/loader.js`/`web/vendor/` 和产物 `swift/.build/wasm32-unknown-wasip1/release/ENDBattery.wasm` 拷进 `_site/` → `actions/upload-pages-artifact@v3`。
-- `deploy`(`runs-on: ubuntu-latest`):`actions/configure-pages@v5`(只读取已存在的 Pages 站点,**不**用默认 token 自举)+ `actions/deploy-pages@v4`;顶层 `permissions: pages: write` + `id-token: write`。
+- `build`(`container: swift:6.3.2`):用**官方 Swift 发布镜像**而非在 CI 里现装 swiftly —— toolchain 预装,镜像 tag 必须与下面装的 wasm SDK **版本精确一致**(`swift:6.3.2` ↔ `swift-6.3.2-RELEASE_wasm`)。步骤(`swift sdk install` 与 `swift build` 两步 `working-directory: swift`):`swift sdk install <与本地同一 URL+checksum>` → `swift build -c release --swift-sdk swift-6.3.2-RELEASE_wasm --product ENDBattery` → 把 `web/index.html`/`web/app.js`/`web/loader.js`/`web/blueprint.js`/`web/vendor/`/`web/assets/` 和产物 `swift/.build/wasm32-unknown-wasip1/release/ENDBattery.wasm` 拷进 `_site/` → `actions/upload-pages-artifact@v5`。
+- `deploy`(`runs-on: ubuntu-latest`):`actions/configure-pages@v6`(只读取已存在的 Pages 站点,**不**用默认 token 自举)+ `actions/deploy-pages@v5`;顶层 `permissions: pages: write` + `id-token: write`。
 
 要点 / 坑:
 
-- **容器 job 不需要镜像自带 node**:GitHub 把 runner 的 node 注入容器(`/__e/node20`),`checkout`/`upload-pages-artifact` 等 JS action 照常跑;swift 镜像(Debian/Ubuntu)自带 `tar`/`gzip`/`cp`,assemble 与打包够用。
+- **容器 job 不需要镜像自带 node**:GitHub 把 runner 的 node(随 action 要求的 major,现为 node24)注入容器,`checkout`/`upload-pages-artifact` 等 JS action 照常跑;swift 镜像(Debian/Ubuntu)自带 `tar`/`gzip`/`cp`,assemble 与打包够用。
+- **assemble 步是手写白名单,加新 `web/` 运行时文件必须同步加进 cp**:页面是 ES module,`app.js` import 的目标(如 `web/blueprint.js`)和静态资源(如 `web/assets/icons/*.svg`)漏拷进 `_site/` → 线上 404 → 整张 module 图 import 失败、全页崩。实测教训:第四轮 step4 加了 `blueprint.js`+`assets/` 却没改 assemble,线上 `blueprint.js`/`assets` 全 404。改 `web/` 文件清单后,先本地 dry-run 组装 `_site` 再把页面引用的每条路径逐一解析过一遍。
 - wasm 产物 triple 子目录 `wasm32-unknown-wasip1` 由 SDK 决定、与 host 架构无关,Linux amd64 runner 上路径同 mac。
 - **尺寸**:wasm 约 58MB(完整 Foundation,未瘦身)< Pages 单文件 100MB 限;Pages/Fastly 对 `application/wasm` 自动 gzip/br,裸传只剩零头,首版无需瘦身。要再压缩可在 build job 加 binaryen 跑 `wasm-opt -Os`,属增量,非必需。
 - `.wasm` **不进 git**(`/ENDBattery.wasm` 在 `.gitignore`),CI 每次 push 重编重放,网页永远最新。
-- **必须先一次性 enable Pages 才能 deploy**(已实测:不 enable 时 deploy job 在 Configure Pages 步报 HTTP 404 "Get Pages site failed")。`configure-pages@v5` 的 `enablement` 输入按其 action.yml **不接受默认 `GITHUB_TOKEN`**(需 PAT/App token),故它**不会**自举。用 owner token 跑 `gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow`(或 Settings → Pages 选 source = "GitHub Actions")开启一次即可,之后 CI 每次重跑都成功。
-- Node 24 升级(2026-06-09 用户拍板,待实现):四个 JS action `checkout@v4`/`upload-pages-artifact@v3`/`configure-pages@v5`/`deploy-pages@v4` 现跑在 Node 20,GitHub 将于 2026-06-16 强制迁 Node 24。已决定主动 bump 到各自当前最新 major(确切版号实现时现查官方仓库),无 JS 构建步故无需 `setup-node`。
+- **必须先一次性 enable Pages 才能 deploy**(已实测:不 enable 时 deploy job 在 Configure Pages 步报 HTTP 404 "Get Pages site failed")。`configure-pages` 的 `enablement` 输入按其 action.yml **不接受默认 `GITHUB_TOKEN`**(需 PAT/App token),故它**不会**自举。用 owner token 跑 `gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow`(或 Settings → Pages 选 source = "GitHub Actions")开启一次即可,之后 CI 每次重跑都成功。
+- **JS action 跑 node24**(2026-06-09 升级,GitHub 2026-06-16 才强制迁 Node 24,这里提前主动 bump):`checkout@v6`/`upload-pages-artifact@v5`/`configure-pages@v6`/`deploy-pages@v5`,每个版本都经 `gh api repos/<a>/releases/latest` + 读其 `action.yml` 的 `runs.using` 现查确认 node24(`upload-pages-artifact` 是 composite,内嵌 `upload-artifact@v7` 跑 node24)。无 JS 构建步故无需 `setup-node`,沿用 major-only pin。再 bump 时同法现查,别凭记忆写版号。
 
 ## Validation
 
