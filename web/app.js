@@ -10,6 +10,7 @@
 // uses to share one module between the browser and the Node smoke test.
 
 import { runWasm } from "./loader.js";
+import { extractStepsLine, parseSteps, renderBlueprint } from "./blueprint.js";
 
 // Battery kinds, matching ENDBatteryCore's Config.Battery and its Chinese names.
 export const BATTERY_TYPES = [
@@ -121,6 +122,7 @@ function initPage() {
 		status: $("status"),
 		result: $("result"),
 		stderr: $("stderr"),
+		blueprint: $("blueprint"),
 	};
 
 	const setStatus = (msg) => {
@@ -370,6 +372,8 @@ function initPage() {
 			const { stdout, stderr, exitCode } = await runWasm(mod, json);
 			els.result.textContent = stdout || "(无输出)";
 			els.stderr.textContent = stderr;
+			const sl = extractStepsLine(stdout);
+			renderBlueprint(sl ? parseSteps(sl.actions) : null, els.blueprint);
 			setStatus(exitCode === 0 ? "完成" : `进程退出码 ${exitCode}`);
 		} catch (err) {
 			setStatus(`出错: ${err.message}`);
