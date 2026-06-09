@@ -120,7 +120,7 @@ swift run -c release --swift-sdk swift-6.3.2-RELEASE_wasm
 把计算输出的 `🛠 操作步骤` 串渲染成左→右线性示意图。纯解析核心在 `web/blueprint.js`(无 DOM,`web/test/blueprint-smoke.mjs` 用 Node 断言),sprite 与 DOM 渲染器分步加。
 
 - **步骤串文法**(来自 `Calculator.swift` 的 `allActions`):token = `<ports><action>[×<count>]`,空白分隔。`ports` 2/3 = 分流口数(同一 3 分流器 sprite,数字作 badge);`action` 🟢=add(分流后接三合一汇流器)/🔴=discard(阻流,不汇流);`×N` 是连续相同步的游程编码。串已归一化(preSplitBits 的阻流段在最前、同 action 组按 type 降序),故按打印顺序线性渲染即「逻辑示意」,不含物理传送带顺序。
-- **blueprint.js 契约**:`extractStepsLine(stdout)` 抽 `操作步骤(N):　<tokens>` 行(冒号后是全角空格 U+3000);`parseSteps(actions)` → `{raw, steps, nodes, stepCount, unparsed}`,`nodes` = 热能池(source) → 入口汇流(entry merger) → 每步 splitter(add 步再跟一个 merge merger),`unparsed` 收非法 token 不静默丢。sprite 名固定 `web/assets/icons/{thermal-pool,splitter,merger,belt-straight,belt-curve,bridge}.png`(制图须产同名文件)。
+- **blueprint.js 契约**:`extractStepsLine(stdout)` 抽 `操作步骤(N):　<tokens>` 行(冒号后是全角空格 U+3000);`parseSteps(actions)` → `{raw, steps, nodes, stepCount, unparsed}`,`nodes` = 热能池(source) → 入口汇流(entry merger) → 每步 splitter(add 步再跟一个 merge merger),`unparsed` 收非法 token 不静默丢。图标名固定 `web/assets/icons/{thermal-pool,splitter,merger,belt-straight,belt-curve,bridge}.svg`(**手绘示意 SVG**,2026-06-09 改定;原"从游戏截图裁 PNG"方案作废,因裁图全错且 `.scratch/` 不进 git)。
 
 ### 5. 部署(GitHub Actions → Pages)
 
@@ -136,7 +136,7 @@ workflow:`.github/workflows/deploy-pages.yml`,两个 job:
 - **尺寸**:wasm 约 58MB(完整 Foundation,未瘦身)< Pages 单文件 100MB 限;Pages/Fastly 对 `application/wasm` 自动 gzip/br,裸传只剩零头,首版无需瘦身。要再压缩可在 build job 加 binaryen 跑 `wasm-opt -Os`,属增量,非必需。
 - `.wasm` **不进 git**(`/ENDBattery.wasm` 在 `.gitignore`),CI 每次 push 重编重放,网页永远最新。
 - **必须先一次性 enable Pages 才能 deploy**(已实测:不 enable 时 deploy job 在 Configure Pages 步报 HTTP 404 "Get Pages site failed")。`configure-pages@v5` 的 `enablement` 输入按其 action.yml **不接受默认 `GITHUB_TOKEN`**(需 PAT/App token),故它**不会**自举。用 owner token 跑 `gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow`(或 Settings → Pages 选 source = "GitHub Actions")开启一次即可,之后 CI 每次重跑都成功。
-- Node 20 弃用提醒:`checkout@v4`/`upload-artifact@v4`/`configure-pages@v5`/`deploy-pages@v4` 现跑在 Node 20 上,GitHub 将于 2026-06-16 强制迁到 Node 24。当前 run 仍绿,后续若因此 break 再升级 action 版本。
+- Node 24 升级(2026-06-09 用户拍板,待实现):四个 JS action `checkout@v4`/`upload-pages-artifact@v3`/`configure-pages@v5`/`deploy-pages@v4` 现跑在 Node 20,GitHub 将于 2026-06-16 强制迁 Node 24。已决定主动 bump 到各自当前最新 major(确切版号实现时现查官方仓库),无 JS 构建步故无需 `setup-node`。
 
 ## Validation
 
@@ -146,7 +146,7 @@ workflow:`.github/workflows/deploy-pages.yml`,两个 job:
 - 本地起静态服务器:先 `cp swift/.build/wasm32-unknown-wasip1/release/ENDBattery.wasm web/`,再 `cd web && python3 -m http.server` 打开页面,填一组参数,确认输出与对应测试场景一致。
 - push 后确认 Actions 构建成功、Pages 站点可访问。
 - 浏览器 DevTools Network 确认 `.wasm` 以 `application/wasm` 返回、无 404。
-- **已上线实测**(2026-06-07):站点 https://miku1958.github.io/ENDBattery/ ,`ENDBattery.wasm` 返回 200 + `application/wasm`;下载线上 `.wasm` 经 `loader.js` 跑 `武陵` 种子得 `621.1706`,与 `test武陵` 一致。**尚缺**:真实浏览器里表单/localStorage/多 config 交互(需 `chrome-cdp`,用户批准后才可跑)。
+- **已上线实测**(2026-06-07):站点 https://miku1958.github.io/ENDBattery/ ,`ENDBattery.wasm` 返回 200 + `application/wasm`;下载线上 `.wasm` 经 `loader.js` 跑 `武陵` 种子得 `621.1706`,与 `test武陵` 一致。**真实浏览器交互**(表单/localStorage/多 config、蓝图渲染)**由用户目视 review**(2026-06-09:用户负责 review HTML 并给修改内容),不走 `chrome-cdp`。
 
 ## Constraints / Safety
 

@@ -37,8 +37,7 @@ swift run   -c release --swift-sdk swift-6.3.2-RELEASE_wasm        # WasmKit 本
 
 ## 待确认(需用户输入,非 agent 可自决)
 
-- **真实浏览器交互验证**:表单渲染(含第二轮 #1 标签/下拉文案、#4「分流电池」分组)/ localStorage 持久化 / 多 config 切换-保存-删除 这些**纯 DOM 交互**尚未在真实 Chrome 里实测过(纯数据/计算路径已被 `page-config-smoke` + 线上 wasm 实测覆盖)。要实测需用 `chrome-cdp` 驱动真实浏览器,而该能力须用户**显式批准**后才可用。问题与 Node 20 弃用提醒一并记入 `question.md`。
-- **README 已陈旧**:[README.md](../../../README.md) 仍描述 round 1 已删除的产品级 CLI(`swift run` 跑硬编码 `Config.myBase`、`swiftc Sources/ENDBattery/main.swift`、旧输出格式 `所需电池数量:`、旧电池名表),与现 HTML/WASM 产品完全不符。属 round 1 删 CLI 时漏改的整篇陈旧文档,非第二轮改名范围;如何处理(按现产品重写 / 删除)需用户决定,故未在本轮顺手改。
+- **README 已陈旧**:[README.md](../../../README.md) 仍描述 round 1 已删除的产品级 CLI(`swift run` 跑硬编码 `Config.myBase`、`swiftc Sources/ENDBattery/main.swift`、旧输出格式 `所需电池数量:`、旧电池名表),与现 HTML/WASM 产品完全不符。属 round 1 删 CLI 时漏改的整篇陈旧文档;如何处理(按现产品重写 / 删除 / 暂不动)需用户决定,见 [question.md](question.md)。
 
 ## 第二轮:UI 改进需求(2026-06-08,已完成)
 
@@ -121,8 +120,8 @@ cd web && python3 -m http.server 8000      # 开 http://localhost:8000/
 ### 子任务进度(按执行顺序)
 
 1. ✅ **步骤串解析器 + 渲染模型(纯核心,Node 可测)**。[web/blueprint.js](../../../web/blueprint.js):`parseSteps(actions)` 把 `🛠 操作步骤` 串解析成左→右线性示意的渲染模型,`extractStepsLine(stdout)` 从整段 stdout 抽出 `操作步骤(N):　<tokens>` 行。token 文法 `^([23])(🔴|🟢)(?:×(\d+))?$`:`2/3`=分流口数(同一 sprite,数字作 badge)、`🟢`=add(分流后接汇流器)、`🔴`=discard(阻流,不汇流)、`×N`=游程展开成 N 个独立步。模型 `nodes` = `[热能池(source) → 入口汇流(entry merger) → 每步 splitter(add 步再跟一个 merge merger)]`;`unparsed` 收非法 token(不静默丢)。**sprite 名契约**(下一步制图必须产出同名文件):`web/assets/icons/{thermal-pool,splitter,merger,belt-straight,belt-curve,bridge}.png`。验证:[web/test/blueprint-smoke.mjs](../../../web/test/blueprint-smoke.mjs)(`node web/test/blueprint-smoke.mjs`)拿两个种子的真实 `操作步骤` 行断言——`stepCount` == 打印的 N、splitter 数 == 步数、merge 汇流器数 == 🟢 数(4号谷地 4 / 武陵 3)、source+entry 在最前、2/3 口正确、`3🔴×2` 展开成 2 步、空串/非法 token 不崩,28/28 全绿;`node --check web/blueprint.js` 过;loader-smoke / page-config-smoke 仍全绿(纯新增文件,未动既有路径)。
-2. 🚧 **BLOCKED — render-ready sprite → `web/assets/icons/`**。产出步骤 #1 契约里的 6 个 png(tile 对齐、统一尺寸、去游戏 UI chrome)。**阻塞**(2026-06-08):逐张核过 `.scratch/icons/` 工作裁图,污染严重无法直接用——`1-thermal-pool` 周围是 UI 建造面板+网格线+梯形轮廓,`2-splitter-3` 主体被左边缘切掉且右半是相邻 tile 斜纹,merger/belt/bridge 同样混入相邻 tile 与网格线。这些是含 chrome、被切断的截图碎片,不是 tile 对齐 glyph;视觉/像素规则禁止靠感觉猜 tile 边界硬抠。干净重裁需 **3638×1826 源截图**(`Screenshot 2026-06-08 ...png`,**当前不在仓库内,只在用户处**)。已记 [question.md](question.md) #3,等用户三选一:A 补源截图(推荐)/ B 改纯 CSS-SVG 图标(改设计)/ C 用污染裁图凑合(不建议)。registry state=2(blocked)。
-3. ⬜ **DOM 渲染器(blueprint.js,`typeof document` guard)**:吃 #1 的 `nodes`,排成 flex 横链,tile 间插直传送带 sprite,splitter 显 2/3 badge + 红/绿 tint。需真实浏览器目视(`chrome-cdp`,须用户批准),归入下方「待确认」的浏览器交互验证一并做。
+2. ⬜ **6 个示意 SVG 图标 → `web/assets/icons/*.svg`**(2026-06-09 用户拍板,已解除阻塞)。原"从游戏截图提取 PNG sprite"方案作废——用户核过 `.scratch/icons/` 裁图判定全错(含 UI 面板/网格线/被切断形状),且 `.scratch/` 不进 git。改为**手绘示意 SVG**:逻辑示意保真度,清晰可辨即可,视觉风格自由发挥(用户原话「能清晰理解就行,其余自由发挥」)。产出 6 个矢量图标 `web/assets/icons/{thermal-pool,splitter,merger,belt-straight,belt-curve,bridge}.svg`(契约名沿用步骤 #1,扩展名 `.png`→`.svg`),同步把 `blueprint.js` `SPRITES` 注释与 #3 渲染器的路径构造改成 `.svg`;实现时一并删掉 `.scratch/icons/` 的废弃 PNG 裁图。**视觉/像素规则不再约束本步**:这是手绘示意矢量图,不与游戏截图做像素/模板匹配,故无需干净源截图。
+3. ⬜ **DOM 渲染器(blueprint.js,`typeof document` guard)**:吃 #1 的 `nodes`,排成 flex 横链,tile 间插直传送带 sprite,splitter 显 2/3 badge + 红/绿 tint。**目视验证由用户负责**(2026-06-09 用户原话「我负责 review html 并给出修改内容」):不再用 `chrome-cdp` 驱动浏览器;我实现后交用户在浏览器 review,按反馈改。
 4. ⬜ **集成进页面**:`app.js` 提交计算后用 `extractStepsLine(stdout)` → `parseSteps` → 渲染到 [index.html](../../../web/index.html) 新容器,与结果区并列。
 
 ### 已定设计点(原「待定」已解,2026-06-08)
@@ -130,11 +129,15 @@ cd web && python3 -m http.server 8000      # 开 http://localhost:8000/
 - **数据源 = 选项 A**:直接用 `操作步骤` 打印串的分组顺序渲染,零 Swift 改动(用户未要求物理保真,故不走选项 B 的有序 `steps` JSON)。打印串本身把 preSplitBits 的 `阻流` 段排在最前,线性渲染天然满足「阻流器段在前」。
 - **布局 = 左→右线性链**:最简起步,蛇形折行留作后续增强。
 
-### 6 个 sprite(从截图裁,源 `Screenshot 2026-06-08 ...png`,3638×1826)— 已全部确认
+### 6 个示意图标(手绘 SVG,2026-06-09 改定)— 已全部确认
 
-`1 热能池` · `2 三分分流器` · `3 三合一汇流器` · `4 直传送带` · `5 转弯传送带` · `6 物流桥`(belt 立体交叉,垂直两向都有带通过)。**无独立二分分流器**:`2🔴`/`2🟢` 两分步物理上用三分分流器只接 2 口实现,渲染用同一 sprite + 标注区分 2/3。工作裁图在 `.scratch/icons/`(gitignored,`splitter`/`merger` 预览裁框略偏);render-ready sprite(tile 对齐、统一尺寸、可能去背)实现时产出,脱敏后存 `web/assets/icons/`,不放 `~/`。
+`1 热能池` · `2 三分分流器` · `3 三合一汇流器` · `4 直传送带` · `5 转弯传送带` · `6 物流桥`(belt 立体交叉,垂直两向都有带通过)。**无独立二分分流器**:`2🔴`/`2🟢` 两分步物理上用三分分流器只接 2 口实现,渲染用同一 sprite + 标注区分 2/3。原"从游戏截图裁 PNG"方案作废(裁图全错、`.scratch/` 不进 git),改为手绘示意 **SVG** 存 `web/assets/icons/*.svg`:逻辑示意保真度,清晰可辨、统一画布尺寸即可,视觉风格自由发挥。
 
 ### 验证
 
 - 纯核心(子任务 #1):`node web/test/blueprint-smoke.mjs` 对真实 `操作步骤` 行断言渲染规则(已绿)。
-- 渲染器 + 集成(子任务 #3/#4):真实浏览器目视——sprite 总数与步骤数一致、每个 🟢 配一个汇流器、source+入口汇流在最前、2/3 口分流器用对 sprite。
+- 渲染器 + 集成(子任务 #3/#4):**用户目视 review**——我实现后交用户在浏览器看 HTML、给修改内容;核对点:sprite 总数与步骤数一致、每个 🟢 配一个汇流器、source+入口汇流在最前、2/3 口分流器用对 sprite。
+
+## GitHub Actions 升级到 Node 24(2026-06-09 用户确认,待实现)
+
+用户拍板:现在就升级,不等 2026-06-16 GitHub 强制迁移(原话「需要,用当前系统的 node 版本」——即用当前最新、别留在弃用的 Node 20;本机 node 已是 v25)。[deploy-pages.yml](../../workflows/deploy-pages.yml) 的四个 JS action 现跑在 Node 20:`actions/checkout@v4`、`actions/upload-pages-artifact@v3`、`actions/configure-pages@v5`、`actions/deploy-pages@v4`。**实现**:把这四个各 bump 到当前最新 major(跑在 Node 24 上);**确切版本号实现时现查官方仓库确认**(知识截止 2026-01、今天 2026-06,不凭记忆写版号)。本仓库无 JS 构建步、build job 在 `container: swift:6.3.2` 里靠 GitHub 注入的 node 跑 JS action,故**无需加 `setup-node`**,只 bump action 版本即可。改完离线核对 YAML 解析,推后看 Actions run 警告消失。
