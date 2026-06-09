@@ -36,7 +36,7 @@ jobs:
       image: swift:6.3.2
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install wasm Swift SDK
         working-directory: swift
@@ -53,13 +53,14 @@ jobs:
       - name: Assemble static site
         run: |
           mkdir -p _site
-          cp web/index.html web/app.js web/loader.js _site/
+          cp web/index.html web/app.js web/loader.js web/blueprint.js _site/
           cp -R web/vendor _site/vendor
+          cp -R web/assets _site/assets
           cp swift/.build/wasm32-unknown-wasip1/release/ENDBattery.wasm _site/ENDBattery.wasm
           ls -lh _site _site/vendor
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
@@ -71,8 +72,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

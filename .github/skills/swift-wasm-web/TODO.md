@@ -138,6 +138,19 @@ cd web && python3 -m http.server 8000      # 开 http://localhost:8000/
 - 纯核心(子任务 #1):`node web/test/blueprint-smoke.mjs` 对真实 `操作步骤` 行断言渲染规则(已绿)。
 - 渲染器 + 集成(子任务 #3/#4):**用户目视 review**——我实现后交用户在浏览器看 HTML、给修改内容;核对点:sprite 总数与步骤数一致、每个 🟢 配一个汇流器、source+入口汇流在最前、2/3 口分流器用对 sprite。
 
-## GitHub Actions 升级到 Node 24(2026-06-09 用户确认,待实现)
+## GitHub Actions 升级到 Node 24(2026-06-09 用户确认,已实现)
 
-用户拍板:现在就升级,不等 2026-06-16 GitHub 强制迁移(原话「需要,用当前系统的 node 版本」——即用当前最新、别留在弃用的 Node 20;本机 node 已是 v25)。[deploy-pages.yml](../../workflows/deploy-pages.yml) 的四个 JS action 现跑在 Node 20:`actions/checkout@v4`、`actions/upload-pages-artifact@v3`、`actions/configure-pages@v5`、`actions/deploy-pages@v4`。**实现**:把这四个各 bump 到当前最新 major(跑在 Node 24 上);**确切版本号实现时现查官方仓库确认**(知识截止 2026-01、今天 2026-06,不凭记忆写版号)。本仓库无 JS 构建步、build job 在 `container: swift:6.3.2` 里靠 GitHub 注入的 node 跑 JS action,故**无需加 `setup-node`**,只 bump action 版本即可。改完离线核对 YAML 解析,推后看 Actions run 警告消失。
+用户拍板:现在就升级,不等 2026-06-16 GitHub 强制迁移(原话「需要,用当前系统的 node 版本」——即用当前最新、别留在弃用的 Node 20)。[deploy-pages.yml](../../workflows/deploy-pages.yml) 四个 JS action 各 bump 到当前最新 major,版本号实现时经 `gh api repos/<a>/releases/latest` + 读各 `action.yml` 的 `runs.using` **逐一现查确认跑在 node24**(非凭记忆):
+
+| action | 旧 | 新 | `runs.using` |
+|---|---|---|---|
+| `actions/checkout` | v4 | **v6** | `node24`(v6.0.3) |
+| `actions/upload-pages-artifact` | v3 | **v5** | composite → 内嵌 `actions/upload-artifact@v7`(node24) |
+| `actions/configure-pages` | v5 | **v6** | `node24`(v6.0.0) |
+| `actions/deploy-pages` | v4 | **v5** | `node24`(v5.0.0) |
+
+本仓库无 JS 构建步、build job 在 `container: swift:6.3.2` 里靠 GitHub 注入的 node 跑 JS action,故无需加 `setup-node`,只 bump 版本。沿用既有 major-only pin 风格(`@v6` 而非 `@v6.0.3`)。**离线验证**:YAML 经 ruby psych 解析通过。**端到端验证(留待 push 后)**:Actions run 绿 + Node 20 deprecation 警告消失。
+
+### 顺带修复:deploy 组装漏带第四轮新增文件(deploy-breaking,已修)
+
+排查 deploy-pages.yml 时发现 **线上站点已被第四轮 step4 打挂**:`web/app.js` 第 13 行 `import "./blueprint.js"`,但 [deploy-pages.yml](../../workflows/deploy-pages.yml) 组装步只 `cp` 了 `index.html app.js loader.js` + `vendor` + wasm,**漏了 step4 新增的 `web/blueprint.js` 与 `web/assets/`**。实测线上 `app.js` 200 但 `blueprint.js` / `assets/icons/splitter.svg` 均 **404** → ES module import 失败 → 整页脚本崩。Node 24 这次 push 会触发重部,若不一并修则我的 push 会再发一版坏站。**修复**:组装步 cp 行加 `web/blueprint.js`、新增 `cp -R web/assets _site/assets`。**离线验证**:scratch 里 dry-run 组装 `_site`,把页面引用的 10+ 路径(`blueprint.js`、6 个 `assets/icons/*.svg`、`vendor/browser_wasi_shim/index.js`、wasm 等)逐一对 `_site` 解析全部 OK。**根因归属**:第四轮 step4「集成进页面」自审漏查 CI 组装波及面(新增的 import 目标 + 静态资源未进 `_site`),本轮补上。
